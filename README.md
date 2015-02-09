@@ -1,0 +1,2 @@
+# filelink
+Thunderbird filelink plugin
