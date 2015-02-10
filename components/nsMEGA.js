@@ -607,7 +607,6 @@ nsMEGA.prototype = {
 			} catch (e) {
 				ERR(e);
 			}
-		M.sessionStorage = M.localStorage;
 		return {};
 	},
 

@@ -104,7 +104,7 @@ function u_checklogin3a(res,ctx)
 
 	if (typeof res != 'object')
 	{
-		u_logout();
+		u_logout(true);
 		r = res;
 	}
 	else
@@ -147,20 +147,14 @@ function u_checklogin3a(res,ctx)
 
 // erase all local user/session information
 function u_logout(logout)
-{	
-	var a = [localStorage,sessionStorage];
-	for (var i = 2; i--; )
-	{
-		a[i].removeItem('sid');
-		a[i].removeItem('k');
-		a[i].removeItem('p');
-		a[i].removeItem('handle');
-		a[i].removeItem('attr');
-		a[i].removeItem('privk');
-        a[i].removeItem('keyring');
-        a[i].removeItem('puEd255');
-        a[i].removeItem('randseed');
-	}
+{
+	if (d) console.log('u_logout ' + logout);
+
+	Object.keys(localStorage).forEach(function(k) {
+		if (typeof localStorage[k] !== 'function') {
+			delete localStorage[k];
+		}
+	});
 
 	if (logout)
 	{

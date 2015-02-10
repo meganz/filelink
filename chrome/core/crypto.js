@@ -879,11 +879,11 @@ function api_retry()
 
 function api_reqfailed(c,e)
 {
-	Components.utils.reportError('API Request Error ' + e);
+	if (d) console.log('API Request Error ' + e);
 
 	if (e == ESID)
 	{
-		u_logout(true);
+		// u_logout(true);
 		// document.location.hash = 'login';
 	}
 	// else if (c == 2 && e == ETOOMANY)
