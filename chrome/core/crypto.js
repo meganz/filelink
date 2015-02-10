@@ -800,8 +800,10 @@ function api_proc(q)
 			{
 				for (var i = 0; i < this.q.ctxs[this.q.i].length; i++) {
 					var ctx = this.q.ctxs[this.q.i][i];
-					if (ctx.callback) {
+					if (typeof ctx.callback === 'function') try {
 						ctx.callback(typeof t === 'object' && t[i],ctx,this);
+					} catch(e) {
+						console.error(e);
 					}
 				}
 			}
@@ -1107,18 +1109,43 @@ function api_completeupload(t,p,k,callback)
 
 function createfolder(name,callback,toid)
 {
-	var mkat = enc_attr({ n : name },[]);
-	var attr = ab_to_base64(mkat[0]);
-	var key = a32_to_base64(encrypt_key(u_k_aes,mkat[1]));
-	api_req({ a: 'p',t: toid || localStorage.kRootID, n: [{ h:'xxxxxxxx', t:1, a:attr, k:key }],i: requesti},
-	{
-		callback: function(res,ctx)
-		{
-			var h = res && res.f && res.f[0].h;
-			if (h) localStorage['k' + name + 'ID'] = h;
-			callback(h || res);
+	toid = toid || localStorage.kRootID;
+	api_req({a: 'f', c : 1}, {
+		callback: function (r) {
+			var f = typeof r === 'object' && r.f, h;
+			if (Array.isArray(f)) {
+				for(var i in f) {
+					var n = f[i];
+					if(n.p == toid && n.t == 1 && n.k && !n.c) try {
+						crypto_processkey(u_handle,u_k_aes,n);
+						if (n.name == name) {
+							h = n.h;
+							break;
+						}
+					} catch(e) {
+						if (d) console.log('cferror', e);
+					}
+				}
+			}
+			if (h) cfDone(h);
+			else {
+				var mkat = enc_attr({ n : name },[]);
+				var attr = ab_to_base64(mkat[0]);
+				var key = a32_to_base64(encrypt_key(u_k_aes,mkat[1]));
+				api_req({ a: 'p',t: toid, n: [{ h:'xxxxxxxx', t:1, a:attr, k:key }],i: requesti},{
+					callback: function(res,ctx) {
+						var h = res && res.f && res.f[0] && res.f[0].h;
+						cfDone(h, res);
+					}
+				});
+			}
 		}
 	});
+	function cfDone(h, res) {
+		if (d) console.log(h, res, name, toid);
+		if (h) localStorage['k' + name + 'ID'] = h;
+		callback(h || res);
+	}
 }
 
 // generate crypto request response for the given nodes/shares matrix
@@ -1220,8 +1247,9 @@ function crypto_procsr(sr)
 	ctx.callback(false,ctx);
 }
 
+var u_sharekeys = {};
+var u_nodekeys = {};
 var keycache = {};
-
 var rsa2aes = {};
 
 // Try to decrypt ufs node.
@@ -1523,6 +1551,42 @@ function crypto_procmcr(mcr)
 	}
 
 	if (cr[0].length) api_req({ a : 'k', cr : cr });
+}
+
+// decrypt attributes block using AES-CBC, check for MEGA canary
+// attr = ab, key as with enc_attr
+// returns [Object] or false
+function dec_attr(attr,key)
+{
+	var aes;
+	var b;
+
+	attr = asmCrypto.AES_CBC.decrypt( attr, a32_to_ab( [ key[0]^key[4], key[1]^key[5], key[2]^key[6], key[3]^key[7] ] ), false );
+
+	b = ab_to_str_depad(attr);
+
+	if (b.substr(0,6) != 'MEGA{"') return false;
+
+	// @@@ protect against syntax errors
+	try {
+		return JSON.parse(from8(b.substr(4)));
+	} catch (e) {
+		if (d) console.error(b, e);
+		var m = b.match(/"n"\s*:\s*"((?:\\"|.)*?)(\.\w{2,4})?"/), s = m && m[1], l = s && s.length || 0, j=',';
+		while (l--)
+		{
+			s = s.substr(0,l||1);
+			try {
+				from8(s+j);
+				break;
+			} catch(e) {}
+		}
+		if (~l) try {
+			var new_name = s+j+'trunc'+Math.random().toString(16).slice(-4)+(m[2]||'');
+			return JSON.parse(from8(b.substr(4).replace(m[0],'"n":"'+new_name+'"')));
+		} catch(e) {}
+		return { n : 'MALFORMED_ATTRIBUTES' };
+	}
 }
 
 (function __FileFingerprint(scope) {

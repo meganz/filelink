@@ -46,6 +46,9 @@ function ERR() {
 const console = {
 	log : function() {
 		LOG([].slice.call(arguments).join(" "));
+	},
+	error : function() {
+		ERR([].slice.call(arguments).join(" "));
 	}
 };
 
@@ -85,6 +88,19 @@ const M = {
 		ERR(e);
 	}
 });
+// for (var i in M) {
+	// if (typeof M[i] === 'function') {
+		// M[i] = (function(i, fc) {
+			// return function() {
+				// try {
+					// fc.apply(this, arguments);
+				// } catch(e) {
+					// ERR(i + ': ' + e);
+				// }
+			// };
+		// })(i, M[i]);
+	// }
+// }
 
 function nsMEGA() {}
 nsMEGA.prototype = {
@@ -627,6 +643,9 @@ nsMEGA.prototype = {
 			}
 			aPassword = M.base64urlencode(JSON.stringify(data));
 			LOG('Saved authData: ' + aPassword);
+		} else {
+			M.u_logout(true);
+			this._loggedIn = false;
 		}
 		cloudFileAccounts.setSecretValue(this.accountKey, kAuthSecretRealm, aPassword || "");
 	},
@@ -1096,6 +1115,7 @@ nsMEGAFileUploader.prototype = {
 			this.callback(Cr.NS_OK);
 		} else {
 			ERR('Upload error');
+			this.owner._authData = null;
 			this.cancel(Ci.nsIMsgCloudFileProvider.uploadErr);
 		}
 		this._close();
