@@ -1093,6 +1093,7 @@ function api_completeupload(t,p,k,callback)
 		i : requesti
 	},{
 		callback: function(res) {
+			if (d) console.log('api_completeupload', res);
 			let h = typeof res == 'object' && res.f && res.f[0] && res.f[0].h;
 			if (h && h.length == 8) {
 				api_req({a:'l',n:h},{
@@ -1101,7 +1102,7 @@ function api_completeupload(t,p,k,callback)
 					}
 				});
 			} else {
-				callback();
+				callback(res);
 			}
 		}
 	});

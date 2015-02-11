@@ -643,9 +643,6 @@ nsMEGA.prototype = {
 			}
 			aPassword = M.base64urlencode(JSON.stringify(data));
 			LOG('Saved authData: ' + aPassword);
-		} else {
-			M.u_logout(true);
-			this._loggedIn = false;
 		}
 		cloudFileAccounts.setSecretValue(this.accountKey, kAuthSecretRealm, aPassword || "");
 	},
@@ -739,7 +736,8 @@ nsMEGAChunkUploader.prototype = {
 						];
 
 						t = { n : u.file.leafName, hash : u.hash };
-						M.api_completeupload(response, t, key, u._complete.bind(u, key));
+						u._apiCompleteUpload = [response, t, key, u._complete.bind(u, key)];
+						M.api_completeupload.apply(M, u._apiCompleteUpload);
 					}
 
 					delete chunk.u8data;
@@ -1109,14 +1107,24 @@ nsMEGAFileUploader.prototype = {
 	 * @param aHandle  The handle for the uploaded file
 	 */
 	_complete : function nsMFU__complete(aKey, aHandle) {
-		if (aHandle) {
+		if (typeof aHandle === 'string' && aHandle.length === 8) {
 			let link = 'https://mega.co.nz/#!' + aHandle + '!' + M.a32_to_base64(aKey);
 			this.owner._setSharedURL(this.file, link, aHandle, this.hash);
 			this.callback(Cr.NS_OK);
 		} else {
-			ERR('Upload error');
+			ERR('Upload error', aHandle);
 			this.owner._authData = null;
-			this.cancel(Ci.nsIMsgCloudFileProvider.uploadErr);
+			this.owner._loggedIn = false;
+			M.u_logout(true);
+			if (typeof aHandle === 'number' && aHandle < 0 && !this.onUploadErrorLogon) {
+				LOG('Re-login on upload error...', this._apiCompleteUpload);
+				this.onUploadErrorLogon = aHandle;
+				this.owner.logon(function() {
+					M.api_completeupload.apply(M, this._apiCompleteUpload);
+				}.bind(this), this._apiCompleteUpload[3], true);
+			} else {
+				this.cancel(Ci.nsIMsgCloudFileProvider.uploadErr);
+			}
 		}
 		this._close();
 	},
