@@ -646,9 +646,22 @@ function from8(utf8)
 
 function getxhr()
 {
-	var xhr = Components.classes["@mozilla.org/xmlextras/xmlhttprequest;1"]
-                .createInstance(Components.interfaces.nsIXMLHttpRequest);
+	let Ci = Components.interfaces;
+	let xhr = Components.classes["@mozilla.org/xmlextras/xmlhttprequest;1"]
+                .createInstance(Ci.nsIXMLHttpRequest);
 	xhr.mozBackgroundRequest = true;
+	xhr.push = function __FilelinkXHRPush(meth, url, data) {
+		this.open(meth, url, true);
+		if (userAgent) {
+			this.setRequestHeader('User-Agent', userAgent, false);
+		}
+		this.channel.loadFlags |= (
+			Ci.nsIRequest.LOAD_ANONYMOUS |
+			Ci.nsIRequest.LOAD_BYPASS_CACHE |
+			Ci.nsIRequest.INHIBIT_PERSISTENT_CACHING);
+		this.send(data || null);
+	};
+	let userAgent = typeof _userAgent !== 'undefined' && _userAgent;
 	return xhr;
 }
 
@@ -840,18 +853,9 @@ function api_send(q)
 {
 	q.timer = false;
 
-	if (chromehack)
-	{
-		// plug extreme Chrome memory leak
-		var t = q.url.indexOf('/',9);
-		q.xhr.open('POST', q.url.substr(0,t+1), true);
-		q.xhr.setRequestHeader("MEGA-Chrome-Antileak",q.url.substr(t));
-	}
-	else q.xhr.open('POST',q.url,true);
-
 	if (d) console.log("Sending API request: " + q.rawreq + " to " + q.url);
 
-	q.xhr.send(q.rawreq);
+	q.xhr.push('POST',q.url,q.rawreq);
 }
 
 function api_reqerror(q,e)

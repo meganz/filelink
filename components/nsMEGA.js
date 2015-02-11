@@ -367,9 +367,25 @@ nsMEGA.prototype = {
 				.onStopRequest(null, null, Ci.nsIMsgCloudFileProvider.authErr);
 			}.bind(this);
 
-		return this.logon(function () {
-			this._getUserInfo(aSuccessCallback, aFailureCallback);
-		}.bind(this), aFailureCallback, aWithUI);
+		let logon = this.logon.bind(this,
+			this._getUserInfo.bind(this,aSuccessCallback, aFailureCallback),
+				aFailureCallback, aWithUI);
+
+		if (M._userAgent) return logon();
+
+		try {
+			M._userAgent = Cc["@mozilla.org/network/protocol;1?name=http"]
+				.getService(Ci.nsIHttpProtocolHandler).userAgent;
+			let { AddonManager } = Cu.import("resource://gre/modules/AddonManager.jsm", {});
+			AddonManager.getAddonByID('thunderbird-filelink@mega.nz',function(data) {
+				M._userAgent += ' Filelink/' + data.version;
+				LOG(M._userAgent);
+				logon();
+			});
+		} catch(e) {
+			ERR(e);
+			logon();
+		}
 	},
 
 	/**
@@ -753,12 +769,7 @@ nsMEGAChunkUploader.prototype = {
 			}
 		};
 		xhr.timeout = 180000;
-		xhr.open('POST', url);
-		xhr.channel.loadFlags |= (
-			Ci.nsIRequest.LOAD_ANONYMOUS |
-			Ci.nsIRequest.LOAD_BYPASS_CACHE |
-			Ci.nsIRequest.INHIBIT_PERSISTENT_CACHING);
-		xhr.send(this.u8data.buffer);
+		xhr.push('POST', url, this.u8data.buffer);
 		this.xhr = xhr;
 	},
 
