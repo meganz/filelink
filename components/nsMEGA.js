@@ -135,7 +135,6 @@ nsMEGA.prototype = {
 	_fileSpaceUsed : -1,
 	_uploads : [],
 	_urlsForFiles : {},
-	_uploadInfo : {}, // upload info keyed on aFiles.
 
 	/**
 	 * If we don't know the limit, this will return -1.
@@ -268,6 +267,38 @@ nsMEGA.prototype = {
 					return;
 				}
 		}
+	},
+
+	/**
+	 * Retrieves a entry from the SQLite Database.
+	 *
+	 * @param aKey    The database column name
+	 * @param aValue  The row entry to search for
+	 */
+	_getDatabaseEntry: function nsMEGA__getDatabaseEntry(aKey, aValue) {
+		let entry;
+		if (this.db) {
+			let stm = this.db.createStatement("SELECT * FROM ftou WHERE " + aKey + " = :" + aKey + " LIMIT 1");
+			stm.params[aKey] = aValue;
+			try {
+				while (stm.step()) {
+					let row = stm.row;
+					entry = {
+						time: row.time,
+						file: row.file,
+						link: row.link,
+						node: row.node,
+						hash: row.hash
+					};
+					LOG('Got entry ' + entry.node + ': ' + entry.link);
+				}
+			} catch (e) {
+				ERR(e);
+			} finally {
+				stm.reset();
+			}
+		}
+		return entry;
 	},
 
 	/**
@@ -478,25 +509,45 @@ nsMEGA.prototype = {
 		if (Services.io.offline)
 			throw Ci.nsIMsgCloudFileProvider.offlineErr;
 
-		let uploadInfo = this._uploadInfo[aFile.path];
-		if (!uploadInfo)
-			throw Cr.NS_ERROR_FAILURE;
+		try {
+			let dbe = this._getDatabaseEntry('file', aFile.path);
+			if (!dbe) throw 'File not found.';
+			LOG("Sending remove request for " + dbe.node + ': ' + dbe.file);
 
-		this.requestObserver = aCallback;
-		let path = wwwFormUrlEncode(uploadInfo.path);
-		let url = gServerUrl + kDeletePath + "&path=" + uploadInfo.path;
-		LOG("Sending delete request to " + url);
-		let oauthParams =
-			[["root", "sandbox"], ["path", path]];
-		this._connection.signAndSend(url, "", "POST", null,
-			function (aResponseText, aRequest) {
-			LOG("success deleting file; response = " + aResponseText);
-			aCallback.onStopRequest(null, null, Cr.NS_OK);
-		}.bind(this),
-		function (aException, aResponseText, aRequest) {
-			ERR("failed deleting file; response = " + aResponseText);
-			aCallback.onStopRequest(null, null, Ci.nsIMsgCloudFileProvider.uploadErr);
-		}.bind(this), this, null);
+			let Move = M.api_movenode.bind(M, dbe.node, function(res) {
+
+				if (res !== 0) {
+					ERR('Move error: ' + res);
+					return aCallback.onStopRequest(null, null, Ci.nsIMsgCloudFileProvider.uploadErr);
+				}
+
+				aCallback.onStopRequest(null, null, Cr.NS_OK);
+
+				let stm = this.db.createAsyncStatement("DELETE FROM ftou WHERE node = :node");
+				stm.params.node = dbe.node;
+				try {
+					stm.executeAsync({
+						handleError : ERR,
+						handleResult : ERR,
+						handleCompletion : function (aResult) {
+							LOG('DB entry removed, ' + aResult);
+						}
+					});
+				} finally {
+					stm.finalize();
+				}
+			}.bind(this));
+
+			if (!this._loggedIn) {
+				this.requestObserver = aCallback;
+				this._logonAndGetUserInfo(Move, null, true);
+			} else {
+				Move();
+			}
+		} catch(e) {
+			ERR(e);
+			throw Cr.NS_ERROR_FAILURE;
+		}
 	},
 
 	/**
@@ -619,6 +670,35 @@ nsMEGA.prototype = {
 			return password.value;
 
 		return "";
+	},
+
+	/**
+	 * SQLite Database connection
+	 */
+	get db() {
+		if (!this._DBConn) {
+			let file;
+			try {
+				file = Services.dirsvc.get("ProfD", Ci.nsIFile);
+				file.append("megalinks.sqlite");
+				let db = Services.storage.openDatabase(file);
+				if (!db.tableExists('ftou')) {
+					db.createTable('ftou', "time INTEGER, file STRING, link STRING, node STRING, hash STRING");
+				}
+				Object.defineProperty(this, "_DBConn", {value:db});
+			} catch (e) {
+				ERR(e);
+				if (e.result != Cr.NS_ERROR_OUT_OF_MEMORY)
+					try {
+						if (file && file.exists()) {
+							file.remove(false);
+						}
+					} catch (e) {
+						ERR(e);
+					}
+			}
+		}
+		return this._DBConn;
 	},
 
 	/**
@@ -896,53 +976,17 @@ nsMEGAFileUploader.prototype = {
 	/**
 	 * Kicks off the upload request for the file associated with this Uploader.
 	 */
-	uploadFile : function nsMFU_uploadFile(aRetry) {
-		if (!aRetry)
-			this.requestObserver.onStartRequest(null, null);
+	uploadFile : function nsMFU_uploadFile() {
+		this.requestObserver.onStartRequest(null, null);
 
-		if (!this.owner.db) {
-			let file;
-			try {
-				file = Services.dirsvc.get("ProfD", Ci.nsIFile);
-				file.append("megalinks.sqlite");
-				let db = Services.storage.openDatabase(file);
-				if (!db.tableExists('ftou')) {
-					db.createTable('ftou', "time INTEGER, file STRING, link STRING, node STRING, hash STRING");
-				}
-				this.owner.db = db;
-			} catch (e) {
-				ERR(e);
-				if (e.result != Cr.NS_ERROR_OUT_OF_MEMORY)
-					try {
-						if (file && file.exists()) {
-							file.remove(false);
-							if (!aRetry) {
-								return this.uploadFile(true);
-							}
-						}
-					} catch (e) {
-						ERR(e);
-					}
-			}
-		}
-
-		if (this.owner.db) {
+		let ___dbWeakRef___ = this.owner.db; // do NOT remove
+		let dbe = this.owner._getDatabaseEntry('file', this.file.path);
+		if (dbe) {
 			let cached_link;
-			let stm = this.owner.db.createStatement("SELECT * FROM ftou WHERE file = :file LIMIT 1");
-			stm.params.file = this.file.path;
-			try {
-				while (stm.step()) {
-					let row = stm.row;
-					LOG('Got DB Item with link ' + row.link);
-					if (+row.time == this.file.lastModifiedTime) {
-						LOG('Has matching time ' + row.time);
-						cached_link = row.link;
-					}
-				}
-			} catch (e) {
-				ERR(e);
-			} finally {
-				stm.reset();
+			LOG('Got DB Item with link ' + dbe.link);
+			if (+dbe.time == this.file.lastModifiedTime) {
+				LOG('Has matching time ' + dbe.time);
+				cached_link = dbe.link;
 			}
 
 			if (cached_link) {
@@ -1117,10 +1161,10 @@ nsMEGAFileUploader.prototype = {
 	 * @param aKey     The encryption key
 	 * @param aHandle  The handle for the uploaded file
 	 */
-	_complete : function nsMFU__complete(aKey, aHandle) {
+	_complete : function nsMFU__complete(aKey, aHandle, aPrivHandle) {
 		if (typeof aHandle === 'string' && aHandle.length === 8) {
 			let link = 'https://mega.co.nz/#!' + aHandle + '!' + M.a32_to_base64(aKey);
-			this.owner._setSharedURL(this.file, link, aHandle, this.hash);
+			this.owner._setSharedURL(this.file, link, aPrivHandle, this.hash);
 			this.callback(Cr.NS_OK);
 		} else {
 			ERR('Upload error', aHandle);

@@ -1102,7 +1102,7 @@ function api_completeupload(t,p,k,callback)
 			if (h && h.length == 8) {
 				api_req({a:'l',n:h},{
 					callback : function(res) {
-						callback(typeof res !== 'number' && res);
+						callback(typeof res !== 'number' && res, h);
 					}
 				});
 			} else {
@@ -1592,6 +1592,18 @@ function dec_attr(attr,key)
 		} catch(e) {}
 		return { n : 'MALFORMED_ATTRIBUTES' };
 	}
+}
+
+function api_movenode(h, callback, t)
+{
+	t = t || localStorage.kRubbishID;
+
+	api_req({
+		a: 'm',
+		n: 	h,
+		t: 	t,
+		i:  requesti
+	}, { callback : callback });
 }
 
 (function __FileFingerprint(scope) {
