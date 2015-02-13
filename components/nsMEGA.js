@@ -565,22 +565,10 @@ nsMEGA.prototype = {
 	 * @param failureCallback - called back on error.
 	 * @param aWithUI if false, logon fails if it would have needed to put up UI.
 	 *                This is used for things like displaying account settings,
-	 *                where we don't want to pop up the oauth ui.
+	 *                where we don't want to pop up the auth ui.
 	 */
 	logon : function nsMEGA_logon(successCallback, failureCallback, aWithUI) {
-		let p = this._authData.$pw;
-
-		if (!p) {
-			if (aWithUI) {
-				p = this.askPassword();
-			}
-
-			if (!p) {
-				mozRunAsync(failureCallback);
-				return;
-			}
-		}
-
+		let nop = this._authData.n;
 		let ctx = {
 			_checking : !0,
 			checkloginresult : function (ctx, r) {
@@ -613,7 +601,7 @@ nsMEGA.prototype = {
                         						ERR('Error creating folder: ' + res);
                         					else
                         						LOG('Thunderbird folder created with ID ' + res);
-											this._authData = p;
+											this._authData = true;
 											successCallback();
                         				}.bind(this));
                         			}
@@ -629,9 +617,11 @@ nsMEGA.prototype = {
 				} else if (ctx._checking === true) {
 					delete ctx._checking;
 					try {
+						let p = this.askPassword();
+						if (!p) throw 'No password given.';
 						M.u_login(ctx, this._userName, p, null);
 					} catch (e) {
-						alert(e);
+						ERR(e);
 						failureCallback();
 					}
 				} else {
@@ -666,7 +656,7 @@ nsMEGA.prototype = {
 		let serviceURL = this.serviceURL.replace('//',
 			'//' + encodeURIComponent(this._userName) + '@');
 		if (authPrompter.promptPassword(this.displayName, promptString,
-				serviceURL, authPrompter.SAVE_PASSWORD_PERMANENTLY, password))
+				serviceURL, authPrompter.SAVE_PASSWORD_NEVER, password))
 			return password.value;
 
 		return "";
@@ -711,9 +701,7 @@ nsMEGA.prototype = {
 			try {
 				data = JSON.parse(M.base64urldecode(data));
 				for (let k in data) {
-					if (k !== '$pw') {
-						M.localStorage[k] = data[k];
-					}
+					M.localStorage[k] = data[k];
 				}
 				return data;
 			} catch (e) {
@@ -725,22 +713,20 @@ nsMEGA.prototype = {
 	/**
 	 * Sets the cached auth secret for this account.
 	 *
-	 * @param aPassword the pwd secret to cache.
+	 * @param aStore boleean whether to store.
 	 */
-	set _authData(aPassword) {
-		if (aPassword) {
-			let data = {
-				'$pw' : aPassword
-			};
+	set _authData(aStore) {
+		if (aStore) {
+			let data = {};
 			for (let k in M.localStorage) {
 				if (k !== 'removeItem') {
 					data[k] = M.localStorage[k];
 				}
 			}
-			aPassword = M.base64urlencode(JSON.stringify(data));
-			LOG('Saved authData: ' + aPassword);
+			aStore = M.base64urlencode(JSON.stringify(data));
+			LOG('Saved authData: ' + aStore);
 		}
-		cloudFileAccounts.setSecretValue(this.accountKey, kAuthSecretRealm, aPassword || "");
+		cloudFileAccounts.setSecretValue(this.accountKey, kAuthSecretRealm, aStore || "");
 	},
 
 	/**
