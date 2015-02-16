@@ -58,11 +58,7 @@ const console = {
 const M = {
 	d : !0,
 	console : console,
-	localStorage : {
-		removeItem : function (v) {
-			delete this[v]
-		}
-	},
+	localStorage : {},
 	clearTimeout : function (t) {
 		if (t)
 			t.cancel();
@@ -110,7 +106,7 @@ nsMEGA.prototype = {
 
 	get type()"MEGA",
 	get displayName()"MEGA",
-	get serviceURL()"https://mega.co.nz/",
+	get serviceURL()"https://mega.nz/",
 	get iconClass()"chrome://mega-filelink/content/logo16.png",
 	get accountKey()this._accountKey,
 	get lastError()this._lastErrorText,
@@ -120,12 +116,8 @@ nsMEGA.prototype = {
 	_accountKey : false,
 	_prefBranch : null,
 	_loggedIn : false,
-	_authToken : "",
 	_userInfo : null,
 	_file : null,
-	_requestDate : null,
-	_successCallback : null,
-	_request : null,
 	_uploadingFile : null,
 	_uploader : null,
 	_lastErrorStatus : 0,
@@ -366,7 +358,7 @@ nsMEGA.prototype = {
 		M.api_req({a : 'uq', strg : 1, xfer : 1},
 		{
 			callback : function (res) {
-				if (typeof res == 'object') {
+				if (typeof res === 'object') {
 					this._userInfo = res;
 					this._totalStorage = Math.round(res.mstrg);
 					this._fileSpaceUsed = Math.round(res.cstrg);
@@ -514,7 +506,13 @@ nsMEGA.prototype = {
 			if (!dbe) throw 'File not found.';
 			LOG("Sending remove request for " + dbe.node + ': ' + dbe.file);
 
-			let Move = M.api_movenode.bind(M, dbe.node, function(res) {
+			let ctx = {
+				a: 'm',
+				n:  dbe.node,
+				t:  M.localStorage.kRubbishID,
+				i:  M.requesti
+			};
+			let Move = this._apiReq.bind(this, ctx, function(res) {
 
 				if (res !== 0) {
 					ERR('Move error: ' + res);
@@ -638,6 +636,36 @@ nsMEGA.prototype = {
 	},
 
 	/**
+	 * Log-out and destroy the current session.
+	 */
+	_killSession : function nsMEGA__killSession() {
+		this._authData = null;
+		this._loggedIn = false;
+		M.u_logout(true);
+	},
+
+	/**
+	 * Wrapper around M.api_req which takes care of 
+	 * killing session if found invalid and re-login.
+	 */
+	_apiReq : function nsMEGA__apiReq(ctx, callback) {
+		let retryAttempt;
+		let API_REQ = M.api_req.bind(M, ctx, {
+			callback : function(res, ctx, xhr) {
+				if (res === M.ESID && !retryAttempt) {
+					LOG('Got ESID, retrying...');
+					retryAttempt = true;
+					this._killSession();
+					this._logonAndGetUserInfo(API_REQ, callback, true);
+				} else {
+					callback(res, ctx, xhr);
+				}
+			}.bind(this)
+		});
+		API_REQ();
+	},
+
+	/**
 	 * Prompts the user for a password. Returns the empty string on failure.
 	 */
 	askPassword : function () {
@@ -697,34 +725,27 @@ nsMEGA.prototype = {
 	get _authData() {
 		let data = cloudFileAccounts.getSecretValue(this.accountKey, kAuthSecretRealm);
 		LOG('Got authData: ' + data);
+		M.localStorage = {};
 		if (data)
 			try {
-				data = JSON.parse(M.base64urldecode(data));
-				for (let k in data) {
-					M.localStorage[k] = data[k];
-				}
-				return data;
+				M.localStorage = JSON.parse(M.base64urldecode(data));
 			} catch (e) {
 				ERR(e);
 			}
-		return {};
+		return M.localStorage;
 	},
 
 	/**
 	 * Sets the cached auth secret for this account.
 	 *
-	 * @param aStore boleean whether to store.
+	 * @param aStore boolean whether to save localStorage
 	 */
 	set _authData(aStore) {
 		if (aStore) {
-			let data = {};
-			for (let k in M.localStorage) {
-				if (k !== 'removeItem') {
-					data[k] = M.localStorage[k];
-				}
-			}
-			aStore = M.base64urlencode(JSON.stringify(data));
+			aStore = M.base64urlencode(JSON.stringify(M.localStorage));
 			LOG('Saved authData: ' + aStore);
+		} else {
+			M.localStorage = {};
 		}
 		cloudFileAccounts.setSecretValue(this.accountKey, kAuthSecretRealm, aStore || "");
 	},
@@ -1149,14 +1170,12 @@ nsMEGAFileUploader.prototype = {
 	 */
 	_complete : function nsMFU__complete(aKey, aHandle, aPrivHandle) {
 		if (typeof aHandle === 'string' && aHandle.length === 8) {
-			let link = 'https://mega.co.nz/#!' + aHandle + '!' + M.a32_to_base64(aKey);
+			let link = 'https://mega.nz/#!' + aHandle + '!' + M.a32_to_base64(aKey);
 			this.owner._setSharedURL(this.file, link, aPrivHandle, this.hash);
 			this.callback(Cr.NS_OK);
 		} else {
 			ERR('Upload error', aHandle);
-			this.owner._authData = null;
-			this.owner._loggedIn = false;
-			M.u_logout(true);
+			this.owner._killSession();
 			if (typeof aHandle === 'number' && aHandle < 0 && !this.onUploadErrorLogon) {
 				LOG('Re-login on upload error...', this._apiCompleteUpload);
 				this.onUploadErrorLogon = aHandle;
@@ -1195,15 +1214,14 @@ nsMEGAFileUploader.prototype = {
 		if (!mEncrypter)
 			mEncrypter = new nsMEGAEncrypter();
 
-		M.api_req({
+		this.owner._apiReq({
 			a : 'u',
 			ssl : 0,
 			ms : 0,
 			s : this.file.fileSize,
 			r : this.retries,
 			e : this.lastError || ""
-		}, {
-			callback : function (res, ctx) {
+		}, function (res, ctx) {
 
 				if (typeof res === 'object' && /^http/.test(String(res.p))) {
 					this.url = res.p;
@@ -1237,8 +1255,7 @@ nsMEGAFileUploader.prototype = {
 					ERR('u-handshake error');
 					this.cancel(Cr.NS_ERROR_FAILURE);
 				}
-			}.bind(this)
-		});
+			}.bind(this));
 	}
 };
 

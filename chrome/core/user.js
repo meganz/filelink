@@ -8,7 +8,6 @@ var u_k_aes;	// master key AES engine
 var u_p;		// prepared password
 var u_attr;		// attributes
 var u_privk;	// private key
-var u_storage = localStorage;
 
 // log in
 // returns user type if successful, false if not
@@ -35,9 +34,9 @@ function u_login2(ctx,ks)
 	{
 		localStorage.wasloggedin = true;
 		u_logout();
-		u_storage.k = JSON.stringify(ks[0]);
-		u_storage.sid = ks[1];
-		if (ks[2]) u_storage.privk = base64urlencode(crypto_encodeprivkey(ks[2]));
+		localStorage.k = JSON.stringify(ks[0]);
+		localStorage.sid = ks[1];
+		if (ks[2]) localStorage.privk = base64urlencode(crypto_encodeprivkey(ks[2]));
 		u_checklogin(ctx,false);
 	}
 	else ctx.checkloginresult(ctx,false);
@@ -47,7 +46,7 @@ function u_login2(ctx,ks)
 // if valid session present, return user type
 function u_checklogin(ctx,force,passwordkey,invitecode,invitename,uh)
 {
-	if ((u_sid = u_storage.sid))
+	if ((u_sid = localStorage.sid))
 	{
 		api_setsid(u_sid);
 		u_checklogin3(ctx);
@@ -86,8 +85,8 @@ function u_checklogin2a(ctx,ks)
 		u_k = ks[0];
 		u_sid = ks[1];		
 		api_setsid(u_sid);
-		u_storage.k = JSON.stringify(u_k);
-		u_storage.sid = u_sid;		
+		localStorage.k = JSON.stringify(u_k);
+		localStorage.sid = u_sid;		
 		u_checklogin3(ctx);
 	}
 }
@@ -124,12 +123,12 @@ function u_checklogin3a(res,ctx)
 			}
 		}
 		
-		u_storage.attr = JSON.stringify(u_attr);
-		u_storage.handle = u_handle = u_attr.u;
+		localStorage.attr = JSON.stringify(u_attr);
+		localStorage.handle = u_handle = u_attr.u;
 
 		try {
-			u_k = JSON.parse(u_storage.k);
-			if (u_attr.privk) u_privk = crypto_decodeprivkey(base64urldecode(u_storage.privk));
+			u_k = JSON.parse(localStorage.k);
+			if (u_attr.privk) u_privk = crypto_decodeprivkey(base64urldecode(localStorage.privk));
 		} catch(e) {
 		}
 
@@ -158,8 +157,7 @@ function u_logout(logout)
 
 	if (logout)
 	{
-		delete localStorage.signupcode;
-		delete localStorage.registeremail;
+		api_req({ 'a': 'sml' });
 		fminitialized = false;
 		notifications = u_sid = u_handle = u_k = u_attr = u_privk = u_k_aes = undefined;
 		api_setsid(false);
@@ -185,7 +183,7 @@ function u_setrsa(rsakey)
 	        if (d) console.log("RSA key put result=" + res);
 
 	        u_privk = rsakey;
-	        u_storage.privk = base64urlencode(crypto_encodeprivkey(rsakey));
+	        localStorage.privk = base64urlencode(crypto_encodeprivkey(rsakey));
 	        u_type = 3;
 
 	        ui_keycomplete();

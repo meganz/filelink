@@ -814,7 +814,7 @@ function api_proc(q)
 				for (var i = 0; i < this.q.ctxs[this.q.i].length; i++) {
 					var ctx = this.q.ctxs[this.q.i][i];
 					if (typeof ctx.callback === 'function') try {
-						ctx.callback(typeof t === 'object' && t[i],ctx,this);
+						ctx.callback(typeof t === 'object' ? t[i] : t,ctx,this);
 					} catch(e) {
 						console.error(e);
 					}
@@ -1592,18 +1592,6 @@ function dec_attr(attr,key)
 		} catch(e) {}
 		return { n : 'MALFORMED_ATTRIBUTES' };
 	}
-}
-
-function api_movenode(h, callback, t)
-{
-	t = t || localStorage.kRubbishID;
-
-	api_req({
-		a: 'm',
-		n: 	h,
-		t: 	t,
-		i:  requesti
-	}, { callback : callback });
 }
 
 (function __FileFingerprint(scope) {
