@@ -550,25 +550,30 @@ nsMEGA.prototype = {
 		try {
 			let dbe = this._getDatabaseEntry('file', aFile.path);
 			if (!dbe) throw 'File not found.';
-			LOG("Sending remove request for " + dbe.node + ': ' + dbe.file);
 
 			let Move = function() {
-			  let ctx = {
-				a: 'm',
-				n:  dbe.node,
-				t:  M.localStorage.kRubbishID,
-				i:  M.requesti
-			  };
-			  this._apiReq(ctx, function(res) {
+				LOG("Sending remove request for " + dbe.node + ': ' + dbe.file);
+				let ctx = {
+					a: 'm',
+					n:  dbe.node,
+					t:  M.localStorage.kRubbishID,
+					i:  M.requesti
+				};
+				this._apiReq(ctx, function(res) {
 
-				if (res !== 0) {
-					ERR('Move error: ' + res);
-					aCallback.onStopRequest(null, null, Ci.nsIMsgCloudFileProvider.uploadErr);
-				} else {
-					aCallback.onStopRequest(null, null, Cr.NS_OK);
-					this._deleteDatabaseEntry('node', dbe.node);
-				}
-			  }.bind(this));
+					if (res !== 0) {
+						if (res === -2 && Move) {
+							Move();
+							Move = null;
+						} else {
+							ERR('Move error: ' + res);
+							aCallback.onStopRequest(null, null, Ci.nsIMsgCloudFileProvider.uploadErr);
+						}
+					} else {
+						aCallback.onStopRequest(null, null, Cr.NS_OK);
+						this._deleteDatabaseEntry('node', dbe.node);
+					}
+				}.bind(this));
 			}.bind(this);
 
 			if (!this._loggedIn) {
