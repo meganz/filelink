@@ -101,10 +101,11 @@ function u_checklogin3a(res,ctx)
 {
 	var r = false;
 
-	if (typeof res != 'object')
+	if (typeof res !== 'object')
 	{
-		u_logout(true);
-		r = res;
+		u_logout(function u_cl3a() {
+			ctx.checkloginresult(ctx,res);
+		});
 	}
 	else
 	{
@@ -139,15 +140,14 @@ function u_checklogin3a(res,ctx)
 		else r = 3;
 		
 		// if (r == 3) u_ed25519();
+		ctx.checkloginresult(ctx,r);
 	}
-
-	ctx.checkloginresult(ctx,r);
 }
 
 // erase all local user/session information
 function u_logout(logout)
 {
-	if (d) console.log('u_logout ' + logout);
+	if (d) console.log('u_logout ' + (logout && logout.name));
 
 	Object.keys(localStorage).forEach(function(k) {
 		if (typeof localStorage[k] !== 'function') {
@@ -157,15 +157,19 @@ function u_logout(logout)
 
 	if (logout)
 	{
-		api_req({ 'a': 'sml' });
-		fminitialized = false;
-		notifications = u_sid = u_handle = u_k = u_attr = u_privk = u_k_aes = undefined;
-		api_setsid(false);
-		u_sharekeys = {};
-		u_nodekeys = {};
-		u_type = false;
-		loggedout = true;
-		api_reset();	
+		api_req({ 'a': 'sml' }, {
+			callback: function() {
+				fminitialized = false;
+				notifications = u_sid = u_handle = u_k = u_attr = u_privk = u_k_aes = undefined;
+				api_setsid(false);
+				u_sharekeys = {};
+				u_nodekeys = {};
+				u_type = false;
+				loggedout = true;
+				api_reset();
+				logout();
+			}
+		});
 	}
 }
 

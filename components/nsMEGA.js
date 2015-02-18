@@ -15,10 +15,12 @@ const Ci = Components.interfaces;
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
+Cu.import("resource://gre/modules/AddonManager.jsm");
 Cu.import("resource:///modules/cloudFileAccounts.js");
 
 const kMaxFileSize = Math.pow(2,32) - 1;
 const kAuthSecretRealm = "MEGA Auth Secret";
+const kAddonID = 'thunderbird-filelink@mega.nz';
 
 var LOG = function() {
 	ERR.apply(this, arguments);
@@ -98,7 +100,28 @@ const M = {
 	// }
 // }
 
-function nsMEGA() {}
+let iUninstallListener;
+function nsMEGA() {
+	try {
+		if (iUninstallListener) {
+			AddonManager.removeAddonListener(iUninstallListener);
+		}
+		let self = this;
+		iUninstallListener = {
+			onUninstalling: function onUninstalled(aAddon) {
+				if (aAddon.id === kAddonID) {
+					AddonManager.removeAddonListener(iUninstallListener);
+					self._killSession(function ksUninstall() {
+						LOG('Session killed on uninstall.');
+					});
+				}
+			}
+		};
+		AddonManager.addAddonListener(iUninstallListener);
+	} catch(e) {
+		ERR(e);
+	}
+}
 nsMEGA.prototype = {
 	QueryInterface : XPCOMUtils.generateQI([Ci.nsIMsgCloudFileProvider]),
 
@@ -262,6 +285,30 @@ nsMEGA.prototype = {
 	},
 
 	/**
+	 * Removes a entry from the SQLite Database.
+	 *
+	 * @param aKey    The database column name
+	 * @param aValue  The row entry to search for
+	 */
+	_deleteDatabaseEntry: function nsMEGA__deleteDatabaseEntry(aKey, aValue) {
+		if (this.db) {
+			let stm = this.db.createAsyncStatement("DELETE FROM ftou WHERE " + aKey + " = :" + aKey);
+			stm.params[aKey] = aValue;
+			try {
+				stm.executeAsync({
+					handleError : ERR,
+					handleResult : ERR,
+					handleCompletion : function (aResult) {
+						LOG('DB entry removed, ' + aResult);
+					}
+				});
+			} finally {
+				stm.finalize();
+			}
+		}
+	},
+
+	/**
 	 * Retrieves a entry from the SQLite Database.
 	 *
 	 * @param aKey    The database column name
@@ -399,8 +446,7 @@ nsMEGA.prototype = {
 		try {
 			M._userAgent = Cc["@mozilla.org/network/protocol;1?name=http"]
 				.getService(Ci.nsIHttpProtocolHandler).userAgent;
-			let { AddonManager } = Cu.import("resource://gre/modules/AddonManager.jsm", {});
-			AddonManager.getAddonByID('thunderbird-filelink@mega.nz',function(data) {
+			AddonManager.getAddonByID(kAddonID,function(data) {
 				M._userAgent += ' Filelink/' + data.version;
 				LOG(M._userAgent);
 				logon();
@@ -506,35 +552,24 @@ nsMEGA.prototype = {
 			if (!dbe) throw 'File not found.';
 			LOG("Sending remove request for " + dbe.node + ': ' + dbe.file);
 
-			let ctx = {
+			let Move = function() {
+			  let ctx = {
 				a: 'm',
 				n:  dbe.node,
 				t:  M.localStorage.kRubbishID,
 				i:  M.requesti
-			};
-			let Move = this._apiReq.bind(this, ctx, function(res) {
+			  };
+			  this._apiReq(ctx, function(res) {
 
 				if (res !== 0) {
 					ERR('Move error: ' + res);
-					return aCallback.onStopRequest(null, null, Ci.nsIMsgCloudFileProvider.uploadErr);
+					aCallback.onStopRequest(null, null, Ci.nsIMsgCloudFileProvider.uploadErr);
+				} else {
+					aCallback.onStopRequest(null, null, Cr.NS_OK);
+					this._deleteDatabaseEntry('node', dbe.node);
 				}
-
-				aCallback.onStopRequest(null, null, Cr.NS_OK);
-
-				let stm = this.db.createAsyncStatement("DELETE FROM ftou WHERE node = :node");
-				stm.params.node = dbe.node;
-				try {
-					stm.executeAsync({
-						handleError : ERR,
-						handleResult : ERR,
-						handleCompletion : function (aResult) {
-							LOG('DB entry removed, ' + aResult);
-						}
-					});
-				} finally {
-					stm.finalize();
-				}
-			}.bind(this));
+			  }.bind(this));
+			}.bind(this);
 
 			if (!this._loggedIn) {
 				this.requestObserver = aCallback;
@@ -637,15 +672,18 @@ nsMEGA.prototype = {
 
 	/**
 	 * Log-out and destroy the current session.
+	 *
+	 * @param aCallback  function to invoke once the
+	 *                   session is killed
 	 */
-	_killSession : function nsMEGA__killSession() {
+	_killSession : function nsMEGA__killSession(aCallback) {
 		this._authData = null;
 		this._loggedIn = false;
-		M.u_logout(true);
+		M.u_logout(aCallback);
 	},
 
 	/**
-	 * Wrapper around M.api_req which takes care of 
+	 * Wrapper around M.api_req which takes care of
 	 * killing session if found invalid and re-login.
 	 */
 	_apiReq : function nsMEGA__apiReq(ctx, callback) {
@@ -655,8 +693,10 @@ nsMEGA.prototype = {
 				if (res === M.ESID && !retryAttempt) {
 					LOG('Got ESID, retrying...');
 					retryAttempt = true;
-					this._killSession();
-					this._logonAndGetUserInfo(API_REQ, callback, true);
+					this._killSession(function onApiReqESID() {
+						LOG('Session killed, re-login...');
+						this._logonAndGetUserInfo(API_REQ, callback, true);
+					}.bind(this));
 				} else {
 					callback(res, ctx, xhr);
 				}
@@ -724,7 +764,7 @@ nsMEGA.prototype = {
 	 */
 	get _authData() {
 		let data = cloudFileAccounts.getSecretValue(this.accountKey, kAuthSecretRealm);
-		LOG('Got authData: ' + data);
+		LOG('_authData.get: ' + data);
 		M.localStorage = {};
 		if (data)
 			try {
@@ -743,10 +783,10 @@ nsMEGA.prototype = {
 	set _authData(aStore) {
 		if (aStore) {
 			aStore = M.base64urlencode(JSON.stringify(M.localStorage));
-			LOG('Saved authData: ' + aStore);
 		} else {
 			M.localStorage = {};
 		}
+		LOG('_authData.set: ' + aStore);
 		cloudFileAccounts.setSecretValue(this.accountKey, kAuthSecretRealm, aStore || "");
 	},
 
@@ -982,13 +1022,16 @@ nsMEGAFileUploader.prototype = {
 
 	/**
 	 * Kicks off the upload request for the file associated with this Uploader.
+	 *
+	 * @param  aNoDB  Do not query the DB
 	 */
-	uploadFile : function nsMFU_uploadFile() {
-		this.requestObserver.onStartRequest(null, null);
+	uploadFile : function nsMFU_uploadFile(aNoDB) {
+		if (!aNoDB) {
+		  this.requestObserver.onStartRequest(null, null);
 
-		let ___dbWeakRef___ = this.owner.db; // do NOT remove
-		let dbe = this.owner._getDatabaseEntry('file', this.file.path);
-		if (dbe) {
+		  let ___dbWeakRef___ = this.owner.db; // do NOT remove
+		  let dbe = this.owner._getDatabaseEntry('file', this.file.path);
+		  if (dbe) {
 			let cached_link;
 			LOG('Got DB Item with link ' + dbe.link);
 			if (+dbe.time == this.file.lastModifiedTime) {
@@ -997,11 +1040,27 @@ nsMEGAFileUploader.prototype = {
 			}
 
 			if (cached_link) {
-				this.owner._setSharedURL(this.file, cached_link);
-				return mozRunAsync(function () {
-					this.callback(Cr.NS_OK);
-				}.bind(this));
+				let pubNode = cached_link.match(/!([\w-]{8})!/);
+				if (pubNode && (pubNode = pubNode[1])) {
+					LOG('Checking node validity: ' + pubNode);
+					return this.owner._apiReq({"a":"g","p":pubNode},function(res) {
+
+						if (typeof res === 'number' && res < 0) {
+							LOG('The link is no longer live: ' + res);
+							this.owner._deleteDatabaseEntry('file', dbe.file);
+							this.uploadFile(true);
+						} else {
+							this.owner._setSharedURL(this.file, cached_link);
+							this.callback(Cr.NS_OK);
+						}
+					}.bind(this));
+				} else {
+					// This shouldn't happen
+					ERR('Invalid DB link: ' + cached_link);
+					this.owner._deleteDatabaseEntry('link', cached_link);
+				}
 			}
+		  }
 		}
 
 		LOG("uploadFile: " + this.file.leafName);
@@ -1175,16 +1234,17 @@ nsMEGAFileUploader.prototype = {
 			this.callback(Cr.NS_OK);
 		} else {
 			ERR('Upload error', aHandle);
-			this.owner._killSession();
-			if (typeof aHandle === 'number' && aHandle < 0 && !this.onUploadErrorLogon) {
-				LOG('Re-login on upload error...', this._apiCompleteUpload);
-				this.onUploadErrorLogon = aHandle;
-				this.owner.logon(function() {
-					M.api_completeupload.apply(M, this._apiCompleteUpload);
-				}.bind(this), this._apiCompleteUpload[3], true);
-			} else {
-				this.cancel(Ci.nsIMsgCloudFileProvider.uploadErr);
-			}
+			this.owner._killSession(function onUploadError() {
+				if (typeof aHandle === 'number' && aHandle < 0 && !this.onUploadErrorLogon) {
+					LOG('Re-login on upload error...', this._apiCompleteUpload);
+					this.onUploadErrorLogon = aHandle;
+					this.owner.logon(function() {
+						M.api_completeupload.apply(M, this._apiCompleteUpload);
+					}.bind(this), this._apiCompleteUpload[3], true);
+				} else {
+					this.cancel(Ci.nsIMsgCloudFileProvider.uploadErr);
+				}
+			}.bind(this));
 		}
 		this._close();
 	},

@@ -819,10 +819,7 @@ function api_proc(q)
 						console.error(e);
 					}
 				}
-			}
 
-			if (typeof t === 'object')
-			{
 				this.q.rawreq = false;
 				this.q.backoff = 0;			// request succeeded - reset backoff timer
 				this.q.cmds[this.q.i] = [];
