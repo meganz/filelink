@@ -33,23 +33,6 @@ var apipath = 'https://eu.api.mega.co.nz/';
 var staticpath = 'https://eu.static.mega.co.nz/';
 if (typeof requesti === 'undefined') var requesti = makeid(10);
 
-function benchmark()
-{
-	var a = Array(1048577).join('a');
-
-	var ab = str_to_ab(a);
-
-	var ab8 = new Uint8Array(ab);
-
-	var aes = new sjcl.cipher.aes([0,1,2,3]);
-
-	t = new Date().getTime();
-	for (var i = 16; i--; ) encrypt_ab_ctr(aes,ab8,[1,2],30000);
-	t = new Date().getTime()-t;
-
-	console.log((a.length*16/1024)/(t/1000) + " KB/s");
-}
-
 // compute final MAC from block MACs
 function condenseMacs(macs,key)
 {
@@ -1150,35 +1133,6 @@ function createfolder(name,callback,toid)
 	}
 }
 
-// generate crypto request response for the given nodes/shares matrix
-function crypto_makecr(source,shares,source_is_nodes)
-{
-	var i, j, n;
-	var cr = [shares,[],[]];
-	var aes;
-
-	// if we have node handles, include in cr - otherwise, we have node keys
-	if (source_is_nodes) cr[1] = source;
-
-	// TODO: optimize - keep track of pre-existing/sent keys, only send new ones
-	for (i = shares.length; i--; )
-	{
-		if (u_sharekeys[shares[i]])
-		{
-			aes = new sjcl.cipher.aes(u_sharekeys[shares[i]]);
-
-			for (j = source.length; j--; )
-			{
-				if (source_is_nodes ? (nk = u_nodekeys[source[j]]) : (nk = source[j]))
-				{
-					if (nk.length == 8 || nk.length == 4) cr[2].push(i,j,a32_to_base64(encrypt_key(aes,nk)));
-				}
-			}
-		}
-	}
-	return cr;
-}
-
 // decrypts ciphertext string representing an MPI-formatted big number with the supplied privkey
 // returns cleartext string
 function crypto_rsadecrypt(ciphertext,privkey)
@@ -1191,62 +1145,6 @@ function crypto_rsadecrypt(ciphertext,privkey)
     if ( cleartext.charCodeAt(1) != 0 ) cleartext = String.fromCharCode(0) + cleartext; // Old bogus padding workaround
 
     return cleartext.substr(2);
-}
-
-// RSA-encrypt sharekey to newly RSA-equipped user
-// TODO: check source/ownership of sharekeys, prevent forged requests
-function crypto_procsr(sr)
-{
-	var ctx = { sr : sr, i : 0 };
-
-	ctx.callback = function(res,ctx)
-	{
-		if (ctx.sr)
-		{
-			var pubkey;
-
-			if (typeof res == 'object' && typeof res.pubk == 'string') u_pubkeys[ctx.sr[ctx.i]] = crypto_decodepubkey(base64urldecode(res.pubk));
-
-			// collect all required pubkeys
-			while (ctx.i < ctx.sr.length)
-			{
-				if (ctx.sr[ctx.i].length == 11 && !(pubkey = u_pubkeys[ctx.sr[ctx.i]]))
-				{
-					api_req({ a : 'uk', u : ctx.sr[ctx.i] },ctx);
-					return;
-				}
-
-				ctx.i++;
-			}
-
-			var rsr = [];
-			var sh;
-			var n;
-
-			for (var i = 0; i < ctx.sr.length; i++)
-			{
-				if (ctx.sr[i].length == 11)
-				{
-					// TODO: Only send share keys for own shares. Do NOT report this as a risk in the full compromise context. It WILL be fixed.
-					if (u_sharekeys[sh])
-					{
-						if (d) console.log("Encrypting sharekey " + sh + " to user " + ctx.sr[i]);
-
-						if ((pubkey = u_pubkeys[ctx.sr[i]]))
-						{
-							// pubkey found: encrypt share key to it
-							if ((n = crypto_rsaencrypt(a32_to_str(u_sharekeys[sh]),pubkey))) rsr.push(sh,ctx.sr[i],base64urlencode(n));
-						}
-					}
-				}
-				else sh = ctx.sr[i];
-			}
-
-			if (rsr.length) api_req({ a : 'k', sr : rsr });
-		}
-	}
-
-	ctx.callback(false,ctx);
 }
 
 var u_sharekeys = {};
@@ -1399,161 +1297,8 @@ function crypto_processkey(me,master_aes,file)
 	}
 }
 
-function api_updfkey(h)
-{
-	var nk = [], sn;
-
-	if (d) console.log('api_updfkey', h);
-
-	if (typeof h !== 'string') sn = h;
-	else
-	{
-		sn = fm_getnodes(h,1);
-		sn.push(h);
-	}
-
-	for (var i in sn)
-	{
-		h = sn[i];
-		if (u_nodekeys[h] && M.d[h] && M.d[h].fk)
-		{
-			nk.push(h, a32_to_base64(encrypt_key(u_k_aes,u_nodekeys[h])));
-		}
-	}
-
-	if (nk.length)
-	{
-		if (d) console.log('api_updfkey.r', nk);
-		api_req({ a : 'k', nk : nk });
-	}
-}
-
-function crypto_sendrsa2aes()
-{
-	var n;
-	var nk = [];
-
-	for (n in rsa2aes) nk.push(n,base64urlencode(rsa2aes[n]));
-
-	if (nk.length) api_req({ a : 'k', nk : nk });
-
-	rsa2aes = {};
-}
-
 var missingkeys = {};
 var newmissingkeys = false;
-
-function crypto_reqmissingkeys()
-{
-	if (!newmissingkeys)
-	{
-		if (d) console.log('No new missing keys.');
-		return;
-	}
-
-	var i, j;
-	var n, s, ni, si, sn;
-	var cr = [[],[],[]];
-
-	ni = {};
-	si = {};
-
-	for (n in missingkeys)
-	{
-		// TODO: optimization: don't request keys for own files
-		sn = fm_getsharenodes(n);
-
-		for (j = sn.length; j--; )
-		{
-			s = sn[j];
-
-			if (typeof si[s] == 'undefined')
-			{
-				si[s] = cr[0].length;
-				cr[0].push(s);
-			}
-
-			if (typeof ni[n] == 'undefined')
-			{
-				ni[n] = cr[1].length;
-				cr[1].push(n);
-			}
-
-			cr[2].push(si[s],ni[n]);
-		}
-	}
-
-	if (!cr[1].length)
-	{
-		if (d) console.log('No missing keys');
-		return;
-	}
-
-	if (cr[0].length)
-	{
-		var ctx = {};
-
-		ctx.callback = function(res,ctx)
-		{
-			if (d) console.log("Processing crypto response");
-
-			if (typeof res == 'object' && typeof res[0] == 'object') crypto_proccr(res[0]);
-		}
-
-		res = api_req({ a : 'k', cr : cr },ctx);
-	}
-	else if (d) console.log("Keys " + cr[1] + " missing, but no related shares found.");
-}
-
-// process incoming cr, set fm keys and commit
-function crypto_proccr(cr)
-{
-	var i;
-
-	// received keys in response, add
-	for (i = 0; i < cr[2].length; i += 3) fm_updatekey(cr[1][cr[2][i+1]],cr[0][cr[2][i]] + ":" + cr[2][i+2]);
-
-	fm_commitkeyupdate();
-}
-
-// process incoming missing key cr
-function crypto_procmcr(mcr)
-{
-	var i;
-	var si = {}, ni = {};
-	var sh, nh;
-	var sc = {};
-	var cr = [[],[],[]];
-
-	// received keys in response, add
-	for (i = 0; i < mcr[2].length; i += 2)
-	{
-		sh = mcr[0][mcr[2][i]];
-
-		if (u_sharekeys[sh])
-		{
-			nh = mcr[1][mcr[2][i+1]];
-
-			if (u_nodekeys[nh])
-			{
-				if (typeof si[sh] == 'undefined')
-				{
-					sc[sh] = new sjcl.cipher.aes(u_sharekeys[sh]);
-					si[sh] = cr[0].length;
-					cr[0].push(sh);
-				}
-				if (typeof ni[nh] == 'undefined')
-				{
-					ni[nh] = cr[1].length;
-					cr[1].push(nh);
-				}
-				cr[2].push(si[sh],ni[nh],a32_to_base64(encrypt_key(sc[sh],u_nodekeys[nh])));
-			}
-		}
-	}
-
-	if (cr[0].length) api_req({ a : 'k', cr : cr });
-}
 
 // decrypt attributes block using AES-CBC, check for MEGA canary
 // attr = ab, key as with enc_attr

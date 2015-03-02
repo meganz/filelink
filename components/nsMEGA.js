@@ -662,19 +662,19 @@ nsMEGA.prototype = {
 				} else if (ctx._checking === true) {
 					delete ctx._checking;
 					try {
-						let p = this.askPassword();
+						let p = aWithUI && this.askPassword();
 						if (!p)
 							throw 'No password given.';
 						M.u_login(ctx, this._userName, p, null);
 					} catch (e) {
-						ERR(e);
+						LOG(e);
 						failureCallback();
 					}
 				} else {
 					failureCallback();
 				}
 			}.bind(this)
-			};
+		};
 		try {
 			M.u_checklogin(ctx);
 		} catch (e) {
