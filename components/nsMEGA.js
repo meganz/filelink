@@ -18,22 +18,14 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/AddonManager.jsm");
 Cu.import("resource:///modules/cloudFileAccounts.js");
 
+let kDebug = !1;
 const kMaxFileSize = Math.pow(2,32) - 1;
 const kAuthSecretRealm = "MEGA Auth Secret";
 const kAddonID = 'thunderbird-filelink@mega.nz';
 
-var LOG = function() {
-	ERR.apply(this, arguments);
+function LOG() {
+	if (kDebug) ERR.apply(this, arguments);
 };
-
-if (0) try {
-	let { Log4Moz } = Cu.import("resource:///modules/gloda/log4moz.js", {});
-	let Logger = Log4Moz.getConfiguredLogger("MEGA");
-	LOG = Logger.info.bind(Logger);
-	LOG.logger = Logger;
-} catch(e) {
-	Cu.reportError(e);
-}
 
 function ERR() {
 	let stack = "\n" + new Error().stack.split("\n")
@@ -41,15 +33,12 @@ function ERR() {
 	let args = [].slice.call(arguments);
 	args.unshift(new Date().toISOString());
 	Cu.reportError(args.join(" ") + stack);
-	if (typeof LOG.logger !== 'undefined') {
-		LOG.logger.error.apply(LOG.logger, arguments);
-	}
 }
 const console = {
-	log : function() {
+	log : function mConsoleLog() {
 		LOG([].slice.call(arguments).join(" "));
 	},
-	error : function() {
+	error : function mConsoleError() {
 		ERR([].slice.call(arguments).join(" "));
 	}
 };
@@ -58,14 +47,14 @@ const console = {
 	Services.scriptloader.loadSubScript(file,scope||global))(this);
 
 const M = {
-	d : !0,
+	d : kDebug,
 	console : console,
 	localStorage : {},
-	clearTimeout : function (t) {
+	clearTimeout : function mClearTimeout(t) {
 		if (t)
 			t.cancel();
 	},
-	setTimeout : function (f, n) {
+	setTimeout : function mSetTimeout(f, n) {
 		let args = [].slice.call(arguments, 2);
 		function Call() {
 			try {
@@ -86,19 +75,6 @@ const M = {
 		ERR(e);
 	}
 });
-// for (var i in M) {
-	// if (typeof M[i] === 'function') {
-		// M[i] = (function(i, fc) {
-			// return function() {
-				// try {
-					// fc.apply(this, arguments);
-				// } catch(e) {
-					// ERR(i + ': ' + e);
-				// }
-			// };
-		// })(i, M[i]);
-	// }
-// }
 
 let iUninstallListener;
 function nsMEGA() {
@@ -121,6 +97,9 @@ function nsMEGA() {
 	} catch(e) {
 		ERR(e);
 	}
+	this._uploads = [];
+	this._uploader = null;
+	this._uploadingFile = null;
 }
 nsMEGA.prototype = {
 	QueryInterface : XPCOMUtils.generateQI([Ci.nsIMsgCloudFileProvider]),
@@ -140,15 +119,11 @@ nsMEGA.prototype = {
 	_prefBranch : null,
 	_loggedIn : false,
 	_userInfo : null,
-	_file : null,
-	_uploadingFile : null,
-	_uploader : null,
 	_lastErrorStatus : 0,
 	_lastErrorText : "",
 	_maxFileSize : kMaxFileSize,
 	_totalStorage : -1,
 	_fileSpaceUsed : -1,
-	_uploads : [],
 	_urlsForFiles : {},
 
 	/**
@@ -181,20 +156,20 @@ nsMEGA.prototype = {
 	 */
 	_uploaderCallback : function nsMEGA__uploaderCallback(aRequestObserver,aStatus) {
 		aRequestObserver.onStopRequest(null, null, aStatus);
+		this._removeProgressMeter(this._uploads.shift().transfered|0,
+			this._uploadingFile.fileSize);
+		this._uploader = null;
 		this._uploadingFile = null;
-		this._uploads.shift();
 		if (this._uploads.length > 0) {
 			let nextUpload = this._uploads[0];
 			LOG("chaining upload, file = " + nextUpload.file.leafName);
 			this._uploadingFile = nextUpload.file;
 			this._uploader = nextUpload;
 			try {
-				this.uploadFile(nextUpload.file, nextUpload.callback);
+				this._logonAndUploadFile(nextUpload.file, nextUpload.requestObserver);
 			} catch (ex) {
-				nextUpload.callback(nextUpload.requestObserver, Cr.NS_ERROR_FAILURE);
+				nextUpload.callback(Cr.NS_ERROR_FAILURE);
 			}
-		} else {
-			this._uploader = null;
 		}
 	},
 
@@ -209,11 +184,17 @@ nsMEGA.prototype = {
 		if (Services.io.offline)
 			throw Ci.nsIMsgCloudFileProvider.offlineErr;
 
-		LOG("uploading " + aFile.leafName);
+		LOG("UPLOAD REQUEST FOR " + aFile.leafName);
 
-		// Some ugliness here - we stash requestObserver here, because we might
-		// use it again in _getUserInfo.
-		this.requestObserver = aCallback;
+		// Add progress meter
+		try {
+			this._addProgressMeter();
+			if (this._pmObj) {
+				this._pmObj.total += aFile.fileSize;
+			}
+		} catch(e) {
+			ERR(e);
+		}
 
 		// if we're uploading a file, queue this request.
 		if (this._uploadingFile && this._uploadingFile != aFile) {
@@ -221,15 +202,32 @@ nsMEGA.prototype = {
 					this._uploaderCallback.bind(this, aCallback),
 					aCallback);
 			this._uploads.push(uploader);
-			return;
+		} else {
+			this._logonAndUploadFile(aFile, aCallback);
 		}
-		this._file = aFile;
+	},
+
+	/**
+	 * A private function used to ensure that we are logged-in before
+	 * attempting to upload a file.
+	 *
+	 * @param aFile the nsILocalFile to upload
+	 * @param aCallback an nsIRequestObserver for monitoring the starting and
+	 *                  ending states of the upload.
+	 */
+	_logonAndUploadFile: function nsMEGA__doUploadFile(aFile, aCallback) {
+		if (Services.io.offline)
+			throw Ci.nsIMsgCloudFileProvider.offlineErr;
+
 		this._uploadingFile = aFile;
 
-		let successCallback = this._finishUpload.bind(this, aFile, aCallback);
+		// Some ugliness here - we stash requestObserver here, because we might
+		// use it again in _getUserInfo.
+		this.requestObserver = aCallback;
+
+		let successCallback = this._launchUpload.bind(this, aFile, aCallback);
 		if (!this._loggedIn)
 			return this._logonAndGetUserInfo(successCallback, null, true);
-		LOG("getting user info");
 		if (!this._userInfo)
 			return this._getUserInfo(successCallback);
 		successCallback();
@@ -244,7 +242,7 @@ nsMEGA.prototype = {
 	 * @param aCallback an nsIRequestObserver for monitoring the starting and
 	 *                  ending states of the upload.
 	 */
-	_finishUpload : function nsMEGA__finishUpload(aFile, aCallback) {
+	_launchUpload : function nsMEGA__finishUpload(aFile, aCallback) {
 		let exceedsFileLimit = Ci.nsIMsgCloudFileProvider.uploadExceedsFileLimit;
 		let exceedsQuota = Ci.nsIMsgCloudFileProvider.uploadWouldExceedQuota;
 		if (!aFile.fileSize || aFile.fileSize > this._maxFileSize)
@@ -271,16 +269,20 @@ nsMEGA.prototype = {
 	 * @param aFile the nsILocalFile to cancel the upload for.
 	 */
 	cancelFileUpload : function nsMEGA_cancelFileUpload(aFile) {
+		LOG('cancelFileUpload ' + aFile.path);
 		if (this._uploadingFile.equals(aFile)) {
 			this._uploader.cancel();
 		} else {
-			for (let i = 0; i < this._uploads.length; i++)
-				if (this._uploads[i].file.equals(aFile)) {
-					this._uploads[i].requestObserver.onStopRequest(
+			for (let i = 0; i < this._uploads.length; i++) {
+				let u = this._uploads[i];
+				if (u.file.equals(aFile)) {
+					u.requestObserver.onStopRequest(
 						null, null, Ci.nsIMsgCloudFileProvider.uploadCanceled);
+					this._removeProgressMeter(u.transfered|0, u.file.fileSize);
 					this._uploads.splice(i, 1);
-					return;
+					break;
 				}
+			}
 		}
 	},
 
@@ -298,7 +300,7 @@ nsMEGA.prototype = {
 				stm.executeAsync({
 					handleError : ERR,
 					handleResult : ERR,
-					handleCompletion : function (aResult) {
+					handleCompletion : function onDBCompletion(aResult) {
 						LOG('DB entry removed, ' + aResult);
 					}
 				});
@@ -329,7 +331,7 @@ nsMEGA.prototype = {
 						node: row.node,
 						hash: row.hash
 					};
-					LOG('Got entry ' + entry.node + ': ' + entry.link);
+					LOG('Got DB entry ' + entry.node + ': ' + entry.link);
 				}
 			} catch (e) {
 				ERR(e);
@@ -366,7 +368,7 @@ nsMEGA.prototype = {
 					stm.executeAsync({
 						handleError : ERR,
 						handleResult : ERR,
-						handleCompletion : function (aResult) {
+						handleCompletion : function onDBCompletion(aResult) {
 							LOG('DB transaction finished, ' + aResult);
 						}
 					});
@@ -388,7 +390,7 @@ nsMEGA.prototype = {
 	 * @param failureCallback the function called if information retrieval fails
 	 */
 	_getUserInfo : function nsMEGA__getUserInfo(successCallback,failureCallback) {
-		LOG('_getUserInfo')
+		// LOG('_getUserInfo')
 		if (!successCallback)
 			successCallback = function () {
 				this.requestObserver
@@ -404,7 +406,7 @@ nsMEGA.prototype = {
 
 		M.api_req({a : 'uq', strg : 1, xfer : 1},
 		{
-			callback : function (res) {
+			callback : function uq_handler(res) {
 				if (typeof res === 'object') {
 					this._userInfo = res;
 					this._totalStorage = Math.round(res.mstrg);
@@ -430,7 +432,7 @@ nsMEGA.prototype = {
 	_logonAndGetUserInfo : function nsMEGA_logonAndGetUserInfo(aSuccessCallback,
 		aFailureCallback,
 		aWithUI) {
-		LOG('_logonAndGetUserInfo')
+		// LOG('_logonAndGetUserInfo')
 		if (!aFailureCallback)
 			aFailureCallback = function () {
 				this.requestObserver
@@ -447,7 +449,10 @@ nsMEGA.prototype = {
 			M._userAgent = Cc["@mozilla.org/network/protocol;1?name=http"]
 				.getService(Ci.nsIHttpProtocolHandler).userAgent;
 			AddonManager.getAddonByID(kAddonID,function(data) {
-				M._userAgent += ' Filelink/' + data.version;
+				Object.defineProperty(M,'addonName', {value:data.name});
+				Object.defineProperty(M,'addonShortName', {value:String(data.name).split(' ')[0]});
+				M._userAgent = String(M._userAgent).replace('Mozilla/5.0', M.addonShortName+'/'+data.version);
+				kDebug = String(data.version).replace(/[\d.]/g,'') === 'a';
 				LOG(M._userAgent);
 				logon();
 			});
@@ -532,6 +537,8 @@ nsMEGA.prototype = {
 	 * @param aError the error to get the URL for
 	 */
 	providerUrlForError : function nsMEGA_providerUrlForError(aError) {
+		if (aError == Ci.nsIMsgCloudFileProvider.uploadWouldExceedQuota)
+			return this.serviceURL + "#pro";
 		return "";
 	},
 
@@ -559,7 +566,7 @@ nsMEGA.prototype = {
 					t:  M.localStorage.kRubbishID,
 					i:  M.requesti
 				};
-				this._apiReq(ctx, function(res) {
+				this._apiReq(ctx, function m_handler(res) {
 
 					if (res !== 0) {
 						if (res === -2 && Move) {
@@ -609,45 +616,45 @@ nsMEGA.prototype = {
 		let nop = this._authData.n;
 		let ctx = {
 			_checking : !0,
-			checkloginresult : function (ctx, r) {
-				LOG('checkloginresult, u_type: ' + r);
+			checkloginresult : function checkloginresult(ctx, r) {
+				if (r != 3) LOG('checkloginresult, u_type: ' + r);
 				if (r == 3) {
 					M.u_type = r;
 					this._loggedIn = true;
 					LOG('Logged in as ' + JSON.parse(M.localStorage.attr).name);
 					if (ctx._checking !== true) {
 						this._getUserInfo(function () {
-                        	let cstrgn = this._userInfo.cstrgn;
-                        	if (!cstrgn)
-                        		ERR("Missing 'cstrgn'");
-                        	else {
-                        		cstrgn = Object.keys(cstrgn);
-                        		if (cstrgn.length < 3)
-                        			ERR("Invalid 'cstrgn'");
-                        		else {
-                        			let a = String(cstrgn[0]);
-                        			let b = String(cstrgn[2]);
-                        			LOG('RootID: ' + a);
-                        			LOG('RubbishID: ' + b);
-                        			if ((a + b).length != 16)
-                        				ERR("Unexpected 'cstrgn'");
-                        			else {
-                        				M.localStorage.kRootID = a;
-                        				M.localStorage.kRubbishID = b;
-                        				M.createfolder('Thunderbird', function (res) {
-                        					if (typeof res !== 'string')
-                        						ERR('Error creating folder: ' + res);
-                        					else
-                        						LOG('Thunderbird folder created with ID ' + res);
+							let cstrgn = this._userInfo.cstrgn;
+							if (!cstrgn)
+								ERR("Missing 'cstrgn'");
+							else {
+								cstrgn = Object.keys(cstrgn);
+								if (cstrgn.length < 3)
+									ERR("Invalid 'cstrgn'");
+								else {
+									let a = String(cstrgn[0]);
+									let b = String(cstrgn[2]);
+									LOG('RootID: ' + a);
+									LOG('RubbishID: ' + b);
+									if ((a + b).length != 16)
+										ERR("Unexpected 'cstrgn'");
+									else {
+										M.localStorage.kRootID = a;
+										M.localStorage.kRubbishID = b;
+										M.createfolder('Thunderbird', function cf_handler(res) {
+											if (typeof res !== 'string')
+												ERR('Error creating folder: ' + res);
+											else
+												LOG('Thunderbird folder created with ID ' + res);
 											this._authData = true;
 											successCallback();
-                        				}.bind(this));
-                        			}
-                        		}
-                        	}
-                        	if (!M.localStorage.kRootID) {
+										}.bind(this));
+									}
+								}
+							}
+							if (!M.localStorage.kRootID) {
 								failureCallback();
-                        	}
+							}
 						}.bind(this), failureCallback);
 					} else {
 						successCallback();
@@ -656,7 +663,8 @@ nsMEGA.prototype = {
 					delete ctx._checking;
 					try {
 						let p = this.askPassword();
-						if (!p) throw 'No password given.';
+						if (!p)
+							throw 'No password given.';
 						M.u_login(ctx, this._userName, p, null);
 					} catch (e) {
 						ERR(e);
@@ -666,7 +674,7 @@ nsMEGA.prototype = {
 					failureCallback();
 				}
 			}.bind(this)
-		};
+			};
 		try {
 			M.u_checklogin(ctx);
 		} catch (e) {
@@ -694,7 +702,7 @@ nsMEGA.prototype = {
 	_apiReq : function nsMEGA__apiReq(ctx, callback) {
 		let retryAttempt;
 		let API_REQ = M.api_req.bind(M, ctx, {
-			callback : function(res, ctx, xhr) {
+			callback : function _apiReqHandler(res, ctx, xhr) {
 				if (res === M.ESID && !retryAttempt) {
 					LOG('Got ESID, retrying...');
 					retryAttempt = true;
@@ -713,7 +721,7 @@ nsMEGA.prototype = {
 	/**
 	 * Prompts the user for a password. Returns the empty string on failure.
 	 */
-	askPassword : function () {
+	askPassword : function nsMEGA_askPassword() {
 		LOG("Getting password for user: " + this._userName);
 
 		let password = { value : "" };
@@ -733,6 +741,84 @@ nsMEGA.prototype = {
 			return password.value;
 
 		return "";
+	},
+
+	/**
+	 * Utility functions to inject and handle an
+	 * uploads progress-meter on the Composer window.
+	 */
+	set _meterValue(aChunkSize) {
+		let p = this._pmObj;
+		if (p) {
+			p.current += +aChunkSize|0;
+			p.meter.value = p.current*100/p.total;
+			LOG('Progress('+this._pmID+'): '+p.current+'/'+p.total+' ('+p.meter.value+'%)');
+		}
+	},
+	get _pmObj() {
+		return M._progressmeter && M._progressmeter[this._pmID];
+	},
+	_removeProgressMeter: function nsMEGA__removeProgressMeter(aTransfered, aTotal) {
+		let p = this._pmObj;
+		if (p) {
+			if (+aTransfered !== +aTotal) {
+				p.current -= aTransfered;
+				p.total -= aTotal;
+			}
+			if (p.current == p.total) {
+				p.toolbar.removeChild(p.hbox);
+				delete M._progressmeter[this._pmID];
+			}
+		}
+	},
+	_addProgressMeter: function nsMEGA__addProgressMeter() {
+		if (!M._progressmeter) {
+			M._progressmeter = {};
+		}
+		if (!this._pmID) {
+			this._pmID = (Math.random()*Date.now()).toString(27);
+		}
+		let mDomID = 'megafilelink-meter';
+		let doc = (Services.wm.getMostRecentWindow('msgcompose') || {}).document;
+		if (doc) {
+			let pm = doc.getElementById(mDomID);
+			if (pm) {
+				let id = pm.getAttribute(mDomID);
+				if (M._progressmeter[id]) {
+					doc = null;
+					this._pmID = id;
+				} else {
+					ERR("ProgressMeter Error...");
+					pm.parentNode.removeChild(pm);
+				}
+			}
+		}
+		if (doc) {
+			var tb = doc.getElementById('composeToolbar2');
+			if (!tb || tb.collapsed) {
+				tb = doc.getElementById('FormatToolbar');
+			}
+			if (tb) {
+				let t,h = doc.createElement('hbox');
+				h.setAttribute('id', mDomID);
+				h.setAttribute(mDomID, this._pmID);
+				// h.appendChild(doc.createElement('toolbarseparator'))
+				h.appendChild(doc.createElement('toolbarbutton'))
+					.setAttribute('image', this.iconClass);
+				h.appendChild(doc.createElement('progressmeter')).mode = 'determined';
+				if (tb.lastElementChild.localName !== 'spacer') {
+					tb.appendChild(doc.createElement('spacer')).flex = 1
+				}
+				tb.appendChild(h);
+				M._progressmeter[this._pmID] = {
+					total   : 0,
+					current : 0,
+					hbox    : h,
+					toolbar : tb,
+					meter   : h.childNodes[1]
+				};
+			}
+		}
 	},
 
 	/**
@@ -769,7 +855,7 @@ nsMEGA.prototype = {
 	 */
 	get _authData() {
 		let data = cloudFileAccounts.getSecretValue(this.accountKey, kAuthSecretRealm);
-		LOG('_authData.get: ' + data);
+		// LOG('_authData.get: ' + data);
 		M.localStorage = {};
 		if (data)
 			try {
@@ -791,7 +877,7 @@ nsMEGA.prototype = {
 		} else {
 			M.localStorage = {};
 		}
-		LOG('_authData.set: ' + aStore);
+		// LOG('_authData.set: ' + aStore);
 		cloudFileAccounts.setSecretValue(this.accountKey, kAuthSecretRealm, aStore || "");
 	},
 
@@ -819,14 +905,6 @@ nsMEGA.prototype = {
 	}
 };
 
-function nsMEGAFileUploader(aOwner, aFile, aCallback, aRequestObserver) {
-	LOG("new nsMEGAFileUploader file = " + aFile.leafName);
-	this.file            = aFile;
-	this.owner           = aOwner;
-	this.callback        = aCallback;
-	this.requestObserver = aRequestObserver;
-}
-
 let rID = 0;
 function nsMEGAChunkUploader(aUploader, aOffset, aLength) {
 	this.pid      = 'Chunk$' + aOffset + '.' + aLength + '-' + (++rID);
@@ -844,7 +922,7 @@ nsMEGAChunkUploader.prototype = {
 		let url = this.uploader.url + this.suffix;
 		let xhr, chunk = this;
 
-		LOG('Starting nsMEGAChunkUploader ' + chunk.pid + ' for ' + url);
+		// LOG('Starting nsMEGAChunkUploader ' + chunk.pid + ' for ' + url);
 
 		xhr = M.getxhr();
 		xhr.onerror = xhr.ontimeout = function nsMCX_OnError(ev) {
@@ -890,9 +968,12 @@ nsMEGAChunkUploader.prototype = {
 
 					delete chunk.u8data;
 					delete u.activeUploads[chunk.pid];
+					u.transfered += chunk.bytes;
+					u.owner._meterValue = chunk.bytes;
 					mozRunAsync(u._dispatch.bind(u));
 				} else {
 					ERR('EKEY Upload Error');
+					u.owner._meterValue = -u.transfered;
 					u._restart(EKEY);
 				}
 			} else {
@@ -908,7 +989,7 @@ nsMEGAChunkUploader.prototype = {
 	/**
 	 * Handle an error uploading a chunk
 	 */
-	_error : function () {
+	_error : function nsMCU__error() {
 		if (this.xhr) {
 			delete this.xhr;
 			if (++this.retries < this.uploader.maxChunkRetries) {
@@ -920,9 +1001,8 @@ nsMEGAChunkUploader.prototype = {
 	}
 };
 
-let mEncrypter;
 function nsMEGAEncrypter() {
-	let n = this.nw = 4;
+	let n = this.nw = 4, self = this;
 
 	this.queue = [];
 	this.worker = Array(n);
@@ -933,7 +1013,7 @@ function nsMEGAEncrypter() {
 		wrk.onmessage = function nsMEW_OnMessage(ev) {
 			let job = this.job, chunk = job.chunk, uploader = chunk.uploader;
 
-			LOG(chunk.pid + ' Worker Reply: ' + ev.data);
+			// LOG(chunk.pid + ' Worker Reply: ' + ev.data);
 
 			if (typeof ev.data == 'string') {
 				if (ev.data[0] == '[')
@@ -945,7 +1025,7 @@ function nsMEGAEncrypter() {
 					if (job.callback) {
 						job.callback(chunk);
 					}
-					mozRunAsync(mEncrypter.pop.bind(mEncrypter));
+					mozRunAsync(self.pop.bind(self));
 					delete this.job;
 					delete this.busy;
 				} catch (e) {
@@ -984,7 +1064,7 @@ nsMEGAEncrypter.prototype = {
 				if (!job)
 					break;
 
-				LOG('Starting nsMEGAEncrypter $' + job.chunk.offset);
+				// LOG('Starting nsMEGAEncrypter $' + job.chunk.offset);
 
 				wrk.job = job;
 				wrk.busy = true;
@@ -994,7 +1074,7 @@ nsMEGAEncrypter.prototype = {
 			}
 		}
 	},
-	exists : function (chunk) {
+	exists : function nsMEExists(chunk) {
 		let i = this.queue.length;
 		while (i--) {
 			if (this.queue[i].chunk === chunk) {
@@ -1011,15 +1091,20 @@ nsMEGAEncrypter.prototype = {
 	}
 };
 
+function nsMEGAFileUploader(aOwner, aFile, aCallback, aRequestObserver) {
+	this.file            = aFile;
+	this.owner           = aOwner;
+	this.callback        = aCallback;
+	this.requestObserver = aRequestObserver;
+	this.retries         = -1;
+	this.encrypter       = null;
+	this.lastError       = null;
+	this.transfered      = null;
+	this.inputStream     = null;
+	this.binaryStream    = null;
+	this.activeUploads   = null;
+}
 nsMEGAFileUploader.prototype = {
-	file : null,
-	owner : null,
-	retries : -1,
-	callback : null,
-	lastError : null,
-	inputStream : null,
-	binaryStream : null,
-	activeUploads : null,
 	get maxSimUploads()     4,
 	get maxChunkRetries()   7,
 	get maxUploadRetries()  9,
@@ -1068,7 +1153,7 @@ nsMEGAFileUploader.prototype = {
 		  }
 		}
 
-		LOG("uploadFile: " + this.file.leafName);
+		LOG("nsMEGAFileUploader.uploadFile: " + this.file.leafName);
 		try {
 			this.inputStream = Cc["@mozilla.org/network/file-input-stream;1"]
 				.createInstance(Ci.nsIFileInputStream);
@@ -1082,9 +1167,11 @@ nsMEGAFileUploader.prototype = {
 			LOG('Generating fingerprint for ' + this.file.leafName);
 			M.fingerprint(this, function __fingerprint_cb(hash) {
 				LOG('fingerprint: ' + hash);
-				if (hash)
-					this.hash = hash;
 				try {
+					if (!hash) {
+						throw new Error('Failed to generate fingerprint');
+					}
+					this.hash = hash;
 					this._init();
 				} catch (e) {
 					ERR(e);
@@ -1103,7 +1190,7 @@ nsMEGAFileUploader.prototype = {
 	 * @param aStatus  If an error, why are we canceling the upload
 	 */
 	cancel : function nsMFU_cancel(aStatus) {
-		LOG('Canceling upload ' + this.file.leafName + ', ' + aStatus);
+		LOG('Canceling upload ' + this.file.leafName + ', Status: ' + aStatus);
 		this._abort();
 		this._close();
 		this.callback(aStatus || Ci.nsIMsgCloudFileProvider.uploadCanceled);
@@ -1158,9 +1245,9 @@ nsMEGAFileUploader.prototype = {
 	 * Abort active workers and chunk uploads
 	 */
 	_abort : function nsMFU__abort() {
-		if (mEncrypter) {
-			mEncrypter.worker.map(w => w.terminate());
-			mEncrypter = null;
+		if (this.encrypter) {
+			this.encrypter.worker.map(w => w.terminate());
+			this.encrypter = null;
 		}
 		for each(let chunk in this.activeUploads) {
 			LOG('Aborting ' + chunk.pid + ', ' + (typeof chunk.xhr));
@@ -1184,14 +1271,14 @@ nsMEGAFileUploader.prototype = {
 	 */
 	_dispatch : function nsMFU__dispatch() {
 		let t = this.maxSimUploads - Object.keys(this.activeUploads).length;
-		LOG('_dispatch, ' + t + ' slots');
+		// LOG('_dispatch, ' + t + ' slots');
 		while (t--) {
 			let chunk = this.chunks.pop(), job, callback;
 			if (!chunk)
 				break;
 
 			callback = chunk.start.bind(chunk);
-			if ((job = mEncrypter.exists(chunk))) {
+			if ((job = this.encrypter.exists(chunk))) {
 				LOG('Got pending encrypter job, ' + chunk.pid + '; ' + (typeof job.callback));
 				job.callback = callback;
 			} else if (!chunk.u8data) {
@@ -1199,7 +1286,7 @@ nsMEGAFileUploader.prototype = {
 				if (!data)
 					return this.cancel(Cr.NS_ERROR_FAILURE);
 
-				mEncrypter.push(chunk, data, callback);
+				this.encrypter.push(chunk, data, callback);
 			} else {
 				mozRunAsync(callback);
 			}
@@ -1208,7 +1295,7 @@ nsMEGAFileUploader.prototype = {
 
 		if (this.chunks.length) {
 			let idx = this.chunks.length;
-			while (mEncrypter.queue.length < this.maxEncrypterJobs) {
+			while (this.encrypter.queue.length < this.maxEncrypterJobs) {
 				let chunk = this.chunks[--idx];
 				if (!chunk || chunk.u8data)
 					break;
@@ -1218,10 +1305,10 @@ nsMEGAFileUploader.prototype = {
 					if (!data)
 						break;
 
-					mEncrypter.push(chunk, data);
+					this.encrypter.push(chunk, data);
 				}
 			}
-			mozRunAsync(mEncrypter.pop.bind(mEncrypter));
+			mozRunAsync(this.encrypter.pop.bind(this.encrypter));
 		}
 		LOG('activeUploads', Object.keys(this.activeUploads).length);
 	},
@@ -1276,8 +1363,8 @@ nsMEGAFileUploader.prototype = {
 			return this.cancel(Ci.nsIMsgCloudFileProvider.uploadErr);
 		}
 
-		if (!mEncrypter)
-			mEncrypter = new nsMEGAEncrypter();
+		if (!this.encrypter)
+			this.encrypter = new nsMEGAEncrypter();
 
 		this.owner._apiReq({
 			a : 'u',
@@ -1286,7 +1373,7 @@ nsMEGAFileUploader.prototype = {
 			s : this.file.fileSize,
 			r : this.retries,
 			e : this.lastError || ""
-		}, function (res, ctx) {
+		}, function u_handler(res, ctx) {
 
 				if (typeof res === 'object' && /^http/.test(String(res.p))) {
 					this.url = res.p;
@@ -1315,6 +1402,7 @@ nsMEGAFileUploader.prototype = {
 					LOG('File split into ' + chunks.length + ' chunks');
 					this.chunks = chunks.reverse();
 					this.activeUploads = {};
+					this.transfered = 0;
 					this._dispatch();
 				} else {
 					ERR('u-handshake error');
