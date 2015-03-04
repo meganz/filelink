@@ -35,7 +35,7 @@ ul#provider-space-ul li div {
 	width: 15px;
 	position: absolute;
 	left: 0px;
-	top: 4px;
+	top: 3px;
 	border-radius: 100%;
 	box-sizing: border-box;
 }
@@ -60,6 +60,6 @@ ul#provider-space-ul li strong {
 	text-align: left;
 	position: absolute;
 	bottom: 8px;
-	left: 36px;
+	left: 6px;
 	display:none;
 }

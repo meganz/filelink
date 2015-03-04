@@ -14,7 +14,7 @@ function onLoadProvider(provider) {
 		return document.getElementById(id);
 	};
 	let totalSpace = provider.fileSpaceUsed + provider.remainingFileSpace;
-	// let c = {"aa":[340482299370,4555,110],"bb":[132717590614,49,2],"cc":[11567309000,28,3],"dd":[32717590528,34,1],"ee":[18899,4,3]};
+	// let c = {"aa":[340482299370,4555,110],"bb":[102717590614,49,2],"cc":[11567309000,28,3],"dd":[32717590528,34,1],"ee":[18899,4,3]};
 	let c = provider.QueryInterface(Ci.nsIWritablePropertyBag).getProperty('cstrgn') || {};
 	let k = Object.keys(c), iSharesBytes = 0;
 	for (let i = 3 ; i < k.length ; ++i ) {
@@ -80,7 +80,7 @@ function Knob(aCanvas, aSize, aValues, aStyles, aOptions) {
 	if (outerLineWidth > -1) {
 		ctx.beginPath();
 		ctx.lineWidth = outerLineWidth;
-		ctx.strokeStyle = opt.outerStroke || '#e5e5e5';
+		ctx.strokeStyle = opt.outerStroke || '#cecece';
 		ctx.arc(cw, ch, radius + (lineWidth / 2 + 1) + (outerLineWidth * 2), 0, Math.PI * 2, !0);
 		ctx.stroke();
 	}
