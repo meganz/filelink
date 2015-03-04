@@ -10,17 +10,16 @@
 ]>
 <html xmlns="http://www.w3.org/1999/xhtml">
   <head>
-    <script type="application/javascript;version=1.8"
-            src="chrome://messenger/content/protovis-r2.6-modded.js"/>
     <script type="text/javascript;version=1.8"
-            src="chrome://mega-filelink/content/management.js"/>
-    <link rel="stylesheet"
-        type="text/css"
+        src="chrome://mega-filelink/content/management.js"/>
+    <link rel="stylesheet" type="text/css"
         href="chrome://messenger/skin/preferences/preferences.css" />
+    <link rel="stylesheet" type="text/css"
+        href="chrome://mega-filelink/content/management.css" />
   </head>
   <body id="provider-management">
-    <div id="provider-header" style="max-height:50px;overflow:hidden;padding:0px 0px 4px 0px">
-      <div id="provider-terms" style="white-space:nowrap;float:right;min-width:auto;width:auto">
+    <div id="provider-header">
+      <div id="provider-terms">
         <a href="https://mega.nz/#privacy">&cloudfileMgmt.privacyPolicy;</a>
         <a href="https://mega.nz/#terms">&cloudfileMgmt.termsOfService;</a>
       </div>
@@ -29,22 +28,22 @@
       </div>
 	  <div style="clear:both"></div>
     </div>
-    <div id="provider-spacebox">
-      <div id="provider-space-visuals"></div>
-      <div id="provider-space">
-        <div>
-          <label>&cloudfileMgmt.usedSpace;</label>
-          <span id="file-space-used"/>
-          <span id="file-space-used-swatch" class="space-swatch"/>
-        </div>
-        <div>
-          <label>&cloudfileMgmt.unusedSpace;</label>
-          <span id="remaining-file-space"/>
-          <span id="remaining-file-space-swatch" class="space-swatch"/>
-        </div>
-		<div id="upgrade"><a href="https://mega.nz/#pro">&cloudfileMgmt.upgradeOffer;</a></div>
+    <div xid="provider-spacebox">
+      <!--div xid="provider-space-visuals"></div-->
+      <div id="provider-spacex">
+		<canvas id="provider-space-canvas" width="150" height="150"></canvas>
+		<ul id="provider-space-ul">
+			<li><div></div><span></span><strong></strong></li>
+			<li><div></div><span></span><strong></strong></li>
+			<li><div></div><span></span><strong></strong></li>
+			<li><div></div><span></span><strong></strong></li>
+			<li><div></div><span>&cloudfileMgmt.usedSpace;</span><strong></strong></li>
+			<li><div></div><span>&cloudfileMgmt.unusedSpace;</span><strong></strong></li>
+		</ul>
+		<div style="clear:both"></div>
       </div>
-   </div>
-   <div id="provider-account-settings"><a href="https://mega.nz/#account">&megaMgmt.viewSettings;</a></div> 
+    </div>
+    <div id="upgrade"><a href="https://mega.nz/#pro">&cloudfileMgmt.upgradeOffer;</a></div>
+    <div id="provider-account-settings"><a href="https://mega.nz/#account">&megaMgmt.viewSettings;</a></div> 
   </body>
 </html>

@@ -1,0 +1,65 @@
+#provider-header {
+	max-height:50px;
+	overflow:hidden;
+	padding:0px 0px 4px 0px
+}
+#provider-terms {
+	white-space:nowrap;
+	float:right;
+	min-width:auto;
+	width:auto
+}
+#provider-spacex {
+}
+#provider-spacex canvas {
+	float:left;
+}
+ul#provider-space-ul {
+	float:left;
+	width:50%;
+	list-style: outside none none;
+}
+ul#provider-space-ul li {
+	clear: both;
+	padding: 2px 7px 2px 8px;
+	position: relative;
+	font-size: 13px;
+	line-height: 16px;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	box-sizing: border-box;
+}
+ul#provider-space-ul li div {
+	height: 15px;
+	width: 15px;
+	position: absolute;
+	left: 0px;
+	top: 4px;
+	border-radius: 100%;
+	box-sizing: border-box;
+}
+ul#provider-space-ul li span {
+	color: #666;
+	font-family: "Open Sans",Arial;
+	white-space: nowrap;
+	overflow: hidden;
+	margin-left: 12px;
+}
+ul#provider-space-ul li strong {
+	font-size: 13px;
+	color: #333;
+	text-align: right;
+	position: absolute;
+	right: 0px;
+	font-family: "Open Sans Semibold",Arial;
+}
+#upgrade {
+	background: url(warn.png) no-repeat left top;
+	padding-left: 19px;
+	text-align: left;
+	position: absolute;
+	bottom: 8px;
+	left: 36px;
+	display:none;
+}

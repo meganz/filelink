@@ -102,7 +102,7 @@ function nsMEGA() {
 	this._uploadingFile = null;
 }
 nsMEGA.prototype = {
-	QueryInterface : XPCOMUtils.generateQI([Ci.nsIMsgCloudFileProvider]),
+	QueryInterface : XPCOMUtils.generateQI([Ci.nsIMsgCloudFileProvider,Ci.nsIWritablePropertyBag]),
 
 	classID : Components.ID("{3857A119-990E-43B3-A7E5-92132D13FCC0}"),
 
@@ -125,6 +125,7 @@ nsMEGA.prototype = {
 	_totalStorage : -1,
 	_fileSpaceUsed : -1,
 	_urlsForFiles : {},
+	_properties : {},
 
 	/**
 	 * If we don't know the limit, this will return -1.
@@ -132,6 +133,16 @@ nsMEGA.prototype = {
 	get fileSpaceUsed() this._fileSpaceUsed,
 	get fileUploadSizeLimit() this._maxFileSize,
 	get remainingFileSpace() this._totalStorage - this._fileSpaceUsed,
+	
+	/**
+	 * nsIWritablePropertyBag Implementation
+	 */
+	setProperty: function nsMEGA_setProperty(aName, aValue) {
+		this._properties[aName] = aValue;
+	},
+	getProperty: function nsMEGA_getProperty(aName) {
+		return this._properties[aName];
+	},
 
 	/**
 	 * Initialize this instance of nsMEGA, setting the accountKey.
@@ -242,7 +253,7 @@ nsMEGA.prototype = {
 	 * @param aCallback an nsIRequestObserver for monitoring the starting and
 	 *                  ending states of the upload.
 	 */
-	_launchUpload : function nsMEGA__finishUpload(aFile, aCallback) {
+	_launchUpload : function nsMEGA__launchUpload(aFile, aCallback) {
 		let exceedsFileLimit = Ci.nsIMsgCloudFileProvider.uploadExceedsFileLimit;
 		let exceedsQuota = Ci.nsIMsgCloudFileProvider.uploadWouldExceedQuota;
 		if (!aFile.fileSize || aFile.fileSize > this._maxFileSize)
@@ -409,6 +420,7 @@ nsMEGA.prototype = {
 			callback : function uq_handler(res) {
 				if (typeof res === 'object') {
 					this._userInfo = res;
+					this.setProperty('cstrgn', res.cstrgn);
 					this._totalStorage = Math.round(res.mstrg);
 					this._fileSpaceUsed = Math.round(res.cstrg);
 					successCallback();
