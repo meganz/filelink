@@ -8,7 +8,8 @@ function onLoadProvider(provider) {
 	let messenger = Components.classes["@mozilla.org/messenger;1"]
 		.createInstance(Ci.nsIMessenger);
 	fmtSize = function(s) {
-		return messenger.formatFileSize(s);
+		let f = messenger.formatFileSize(s);
+        return f.replace(/[,.]0 /,' ');
 	};
 	let $ = function(id) {
 		return document.getElementById(id);
@@ -25,7 +26,7 @@ function onLoadProvider(provider) {
 		'#13E03C':[c[k[2]][0],   "Rubbish Bin:"],
 		'#FFD300':[iSharesBytes, "Incoming Shares:"],
 		'#F07800':[c[k[1]][0],   "Inbox:"],
-		'#0e0e0e':[provider.fileSpaceUsed],
+		'#666666':[provider.fileSpaceUsed],
 		'#f0f0f0':[provider.remainingFileSpace]
 	};
 
@@ -85,6 +86,10 @@ function Knob(aCanvas, aSize, aValues, aStyles, aOptions) {
 		ctx.stroke();
 	}
 	ctx.lineWidth = lineWidth;
+	ctx.beginPath();
+	ctx.fillStyle = '#ffffff';
+	ctx.arc(cw, ch, radius + (lineWidth / 2) - 1, 0, Math.PI * 2, !0);
+	ctx.fill();
 
 	for (var i = 0, m = aValues.length; i < m; ++i) {
 		ctx.beginPath();
@@ -93,18 +98,17 @@ function Knob(aCanvas, aSize, aValues, aStyles, aOptions) {
 		ctx.stroke();
 		ctx.closePath();
 	}
-	// aValues = aValues.slice(0,4).reduce(function(a,b){return a+b});
-	// ctx.beginPath();
-	// ctx.lineWidth = 2;
-	// ctx.strokeStyle = 'rgba(0,0,0,0.7)';
-	// ctx.arc(cw,ch,radius-(lineWidth/2), -q, (sq * aValues)-q, false);
-	// ctx.stroke();
 
-	var size = fmtSize(aSize);
+	var size = fmtSize(aSize).split(" ");
 	ctx.beginPath();
-	ctx.fillStyle = opt.textColor || "#2e2e2e";
-	ctx.font = "bold " + Math.ceil(radius - (lineWidth * 1.6)) + "px serif";
-	var x1 = ctx.measureText(size).width;
-	var y1 = ctx.measureText("_").width;
-	ctx.fillText(size, cw - (x1 / 2), ch + (y1 / 2));
+	ctx.fillStyle = opt.textColor || "#333333";
+	ctx.font = "26px Verdana";
+	var x1 = ctx.measureText(size[0]).width;
+	var y1 = ctx.measureText("|").width;
+	var y2 = Math.ceil(ch + (y1 / 2) - 4);
+	ctx.fillText(size[0], cw - (x1 / 2), y2);
+	ctx.fillStyle = opt.textColor || "#666666";
+	ctx.font = "bold 14px Verdana";
+	var x2 = ctx.measureText(size[1]).width;
+	ctx.fillText(size[1], cw - (x2 / 2), y2 + y1 + 8);
 }
