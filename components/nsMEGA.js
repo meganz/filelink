@@ -18,7 +18,7 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/AddonManager.jsm");
 Cu.import("resource:///modules/cloudFileAccounts.js");
 
-let kDebug = !1;
+let kDebug = !0;
 const kMaxFileSize = Math.pow(2,32) - 1;
 const kAuthSecretRealm = "MEGA Auth Secret";
 const kAddonID = 'thunderbird-filelink@mega.nz';
@@ -133,7 +133,7 @@ nsMEGA.prototype = {
 	get fileSpaceUsed() this._fileSpaceUsed,
 	get fileUploadSizeLimit() this._maxFileSize,
 	get remainingFileSpace() this._totalStorage - this._fileSpaceUsed,
-	
+
 	/**
 	 * nsIWritablePropertyBag Implementation
 	 */
@@ -166,11 +166,13 @@ nsMEGA.prototype = {
 	 * @param aStatus the result of the upload
 	 */
 	_uploaderCallback : function nsMEGA__uploaderCallback(aRequestObserver,aStatus) {
-		aRequestObserver.onStopRequest(null, null, aStatus);
 		this._removeProgressMeter(this._uploads.shift().transfered|0,
 			this._uploadingFile.fileSize);
 		this._uploader = null;
 		this._uploadingFile = null;
+		try {// Bug 1140687
+			aRequestObserver.onStopRequest(null, null, aStatus);
+		} catch(e) { ERR(e); }
 		if (this._uploads.length > 0) {
 			let nextUpload = this._uploads[0];
 			LOG("chaining upload, file = " + nextUpload.file.leafName);
@@ -202,18 +204,19 @@ nsMEGA.prototype = {
 			this._addProgressMeter();
 			if (this._pmObj) {
 				this._pmObj.total += aFile.fileSize;
+				this._meterValue = 0;
 			}
 		} catch(e) {
 			ERR(e);
 		}
 
-		// if we're uploading a file, queue this request.
-		if (this._uploadingFile && this._uploadingFile != aFile) {
-			let uploader = new nsMEGAFileUploader(this, aFile,
-					this._uploaderCallback.bind(this, aCallback),
-					aCallback);
-			this._uploads.push(uploader);
-		} else {
+		let uploader = new nsMEGAFileUploader(this, aFile,
+				this._uploaderCallback.bind(this, aCallback),
+				aCallback);
+		this._uploads.push(uploader);
+
+		// if we're not uploading a file, log-in & upload.
+		if (!this._uploadingFile) {
 			this._logonAndUploadFile(aFile, aCallback);
 		}
 	},
@@ -236,11 +239,20 @@ nsMEGA.prototype = {
 		// use it again in _getUserInfo.
 		this.requestObserver = aCallback;
 
-		let successCallback = this._launchUpload.bind(this, aFile, aCallback);
+		let successCallback = function __lauSuccess() {
+			let result = this._launchUpload(aFile, aCallback);
+			if (Cr.NS_OK !== result) {
+				failureCallback(result);
+			}
+		}.bind(this);
+		let failureCallback = function __lauFailure(aStatus) {
+			this._uploaderCallback(aCallback,
+				aStatus || Ci.nsIMsgCloudFileProvider.authErr);
+		}.bind(this);
 		if (!this._loggedIn)
-			return this._logonAndGetUserInfo(successCallback, null, true);
+			return this._logonAndGetUserInfo(successCallback, failureCallback, true);
 		if (!this._userInfo)
-			return this._getUserInfo(successCallback);
+			return this._getUserInfo(successCallback, failureCallback);
 		successCallback();
 	},
 
@@ -254,24 +266,21 @@ nsMEGA.prototype = {
 	 *                  ending states of the upload.
 	 */
 	_launchUpload : function nsMEGA__launchUpload(aFile, aCallback) {
-		let exceedsFileLimit = Ci.nsIMsgCloudFileProvider.uploadExceedsFileLimit;
-		let exceedsQuota = Ci.nsIMsgCloudFileProvider.uploadWouldExceedQuota;
 		if (!aFile.fileSize || aFile.fileSize > this._maxFileSize)
-			return aCallback.onStopRequest(null, null, exceedsFileLimit);
+			return Ci.nsIMsgCloudFileProvider.uploadExceedsFileLimit;
 		if (aFile.fileSize > this.remainingFileSpace)
-			return aCallback.onStopRequest(null, null, exceedsQuota);
+			return Ci.nsIMsgCloudFileProvider.uploadWouldExceedQuota;
 
 		delete this._userInfo; // force us to update userInfo on every upload.
 
 		if (!this._uploader) {
-			this._uploader = new nsMEGAFileUploader(this, aFile,
-					this._uploaderCallback.bind(this, aCallback),
-					aCallback);
-			this._uploads.unshift(this._uploader);
+			this._uploader = this._uploads[0];
 		}
 
 		this._uploadingFile = aFile;
 		this._uploader.uploadFile();
+
+		return Cr.NS_OK;
 	},
 
 	/**
@@ -624,8 +633,44 @@ nsMEGA.prototype = {
 	 *                This is used for things like displaying account settings,
 	 *                where we don't want to pop up the auth ui.
 	 */
-	logon : function nsMEGA_logon(successCallback, failureCallback, aWithUI) {
-		let nop = this._authData.n;
+	logon : function nsMEGA_logon(aSuccessCallback, aFailureCallback, aWithUI) {
+		let __weakRef__ = this._authData.n;
+		let window = aWithUI && Services.wm.getMostRecentWindow(null);
+
+		let successCallback = function __logonSuccess() {
+			mozRunAsync(aSuccessCallback);
+			if (window) gModalWindowList.detach(window);
+		};
+		let failureCallback = function __logonFailure() {
+			mozRunAsync(aFailureCallback);
+			if (window) gModalWindowList.detach(window);
+		};
+		let promptPassword = function __logonPrompt() {
+			if (aWithUI) {
+				if (gModalWindowList.mStateDepth(window)) {
+					LOG("Modal dialog were found open...");
+					gModalWindowList.wait(window, promptPassword);
+				} else {
+					try {
+						let p = this.askPassword(window);
+						if (!p)
+							throw 'No password given.';
+						M.u_login(ctx, this._userName, p, null);
+					} catch(e) {
+						LOG(e);
+						mozRunAsync(failureCallback);
+					}
+				}
+			} else {
+				mozRunAsync(failureCallback);
+			}
+		}.bind(this);
+
+		if (window) {
+			gModalWindowList.watch(window);
+			__bug1140687(window);
+		}
+
 		let ctx = {
 			_checking : !0,
 			checkloginresult : function checkloginresult(ctx, r) {
@@ -673,17 +718,9 @@ nsMEGA.prototype = {
 					}
 				} else if (ctx._checking === true) {
 					delete ctx._checking;
-					try {
-						let p = aWithUI && this.askPassword();
-						if (!p)
-							throw 'No password given.';
-						M.u_login(ctx, this._userName, p, null);
-					} catch (e) {
-						LOG(e);
-						failureCallback();
-					}
+					mozRunAsync(promptPassword);
 				} else {
-					failureCallback();
+					mozRunAsync(failureCallback);
 				}
 			}.bind(this)
 		};
@@ -733,13 +770,13 @@ nsMEGA.prototype = {
 	/**
 	 * Prompts the user for a password. Returns the empty string on failure.
 	 */
-	askPassword : function nsMEGA_askPassword() {
+	askPassword : function nsMEGA_askPassword(aWindow) {
 		LOG("Getting password for user: " + this._userName);
 
 		let password = { value : "" };
 		let messengerBundle = Services.strings
 			.createBundle("chrome://messenger/locale/messenger.properties");
-		let win = Services.wm.getMostRecentWindow(null);
+		let win = aWindow || Services.wm.getMostRecentWindow(null);
 		let authPrompter = Services.ww.getNewAuthPrompter(win);
 		let promptString = messengerBundle.formatStringFromName("passwordPrompt",
 				[this._userName,
@@ -1424,6 +1461,79 @@ nsMEGAFileUploader.prototype = {
 	}
 };
 
+const gModalWindowList = {
+	wms : new WeakMap(),
+	fpc : ['attachToCloud', 'AttachFile'],
+	watch : function GMWL_watch(aWindow) {
+		if (this.wms.has(aWindow)) {
+			LOG('Found window ' + aWindow.location);
+			return false;
+		}
+		LOG('Watching window ' + aWindow.location);
+
+		let self = this;
+		aWindow.addEventListener("DOMWillOpenModalDialog", this, false);
+		aWindow.addEventListener("DOMModalDialogClosed", this, false);
+		this.fpc.forEach(function(fn) {
+
+			aWindow['__MEGA_' + fn] = aWindow[fn];
+			aWindow[fn] = (function __MEGA_GMWW(fn) {
+				return function() {
+					let wm = self.wms.get(aWindow);
+					wm.mStateDepth++;
+					LOG('Calling "'+fn+'"... ' + wm.mStateDepth);
+					aWindow['__MEGA_' + fn].apply(aWindow, arguments);
+					self.dispatch(wm);
+				};
+			})(fn);
+		});
+		this.wms.set(aWindow, {mStateDepth : 0, wl : []});
+	},
+	detach: function GMWL_detach(aWindow) {
+		if (this.wms.has(aWindow)) {
+			LOG('Detaching from window ' + aWindow.location);
+			this.fpc.forEach(function(fn) {
+				aWindow[fn] = aWindow['__MEGA_' + fn];
+				delete aWindow['__MEGA_' + fn];
+			});
+			aWindow.removeEventListener("DOMWillOpenModalDialog", this, false);
+			aWindow.removeEventListener("DOMModalDialogClosed", this, false);
+			this.wms.delete(aWindow);
+		}
+	},
+	wait: function GMWL_wait(aWindow, aCallback) {
+		if (this.wms.has(aWindow)) {
+			let wm = this.wms.get(aWindow);
+			wm.wl.push(aCallback);
+			LOG("Added wait callback " + aCallback.name);
+		}
+	},
+	dispatch: function GMWL_dispatch(aWeakMap) {
+		if (--aWeakMap.mStateDepth === 0) {
+			LOG("Dispatching waiters... " + aWeakMap.wl.length);
+			if (aWeakMap.wl.length) {
+				aWeakMap.wl.map(mozRunAsync);
+				aWeakMap.wl = [];
+			}
+		}
+	},
+	handleEvent: function GMWL_handleEvent(ev) {
+		let wm = this.wms.get(ev.target);
+		LOG(ev.type + ': ' + (wm||{}).mStateDepth);
+		if (wm) switch(ev.type) {
+			case 'DOMWillOpenModalDialog':
+				wm.mStateDepth++;
+				break;
+			case 'DOMModalDialogClosed':
+				this.dispatch(wm);
+				break;
+		}
+	},
+	mStateDepth: function GMWL_mStateDepth(aWindow) {
+		return this.wms.has(aWindow) && this.wms.get(aWindow).mStateDepth;
+	}
+};
+
 const mozLazyGetService = XPCOMUtils.defineLazyServiceGetter.bind(XPCOMUtils, this);
 
 mozLazyGetService("mozMIMEService", "@mozilla.org/mime;1", "nsIMIMEService");
@@ -1449,6 +1559,14 @@ function mozCloseStream(s) {
 		}
 	}
 	s.close();
+}
+
+function __bug1140687(aWindow) {
+	try {
+		if (aWindow.RemoveSelectedAttachment.toSource().indexOf('cloudProvider.cancelFileUpload') === -1) {
+			Services.scriptloader.loadSubScript("chrome://mega-filelink/content/bug1140687.js", aWindow);
+		}
+	} catch(ex) {}
 }
 
 const NSGetFactory = XPCOMUtils.generateNSGetFactory([nsMEGA]);

@@ -9,7 +9,7 @@ function onLoadProvider(provider) {
 		.createInstance(Ci.nsIMessenger);
 	fmtSize = function(s) {
 		let f = messenger.formatFileSize(s);
-        return f.replace(/[,.]0 /,' ');
+		return f.replace(/[,.]0 /,' ');
 	};
 	let $ = function(id) {
 		return document.getElementById(id);
@@ -27,7 +27,7 @@ function onLoadProvider(provider) {
 		'#FFD300':[iSharesBytes, "Incoming Shares:"],
 		'#F07800':[c[k[1]][0],   "Inbox:"],
 		'#666666':[provider.fileSpaceUsed],
-		'#f0f0f0':[provider.remainingFileSpace]
+		'#f0f0f0':[Math.max(0,provider.remainingFileSpace)]
 	};
 
 	let ul = $('provider-space-ul'), canvas = $('provider-space-canvas');
