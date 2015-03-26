@@ -10,14 +10,21 @@
 	width:auto
 }
 #provider-spacex {
+	width: 100%;
+	position: relative;
 }
 #provider-spacex canvas {
-	float:left;
+	top: 0px;
+	left: 4px;
+	position: absolute;
 }
 ul#provider-space-ul {
-	float:left;
-	width:50%;
+	top: 0px;
+	right: 12px;
+	position: absolute;
+	min-width: 50%;
 	list-style: outside none none;
+	overflow:hidden;
 }
 ul#provider-space-ul li {
 	clear: both;
@@ -35,7 +42,7 @@ ul#provider-space-ul li div {
 	width: 15px;
 	position: absolute;
 	left: 0px;
-	top: 3px;
+	top: 4px;
 	border-radius: 100%;
 	box-sizing: border-box;
 }
