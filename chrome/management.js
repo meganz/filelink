@@ -14,9 +14,10 @@ function onLoadProvider(provider) {
 	let $ = function(id) {
 		return document.getElementById(id);
 	};
+	let bag = provider.QueryInterface(Ci.nsIWritablePropertyBag);
 	let totalSpace = provider.fileSpaceUsed + provider.remainingFileSpace;
 	// let c = {"aa":[340482299370,4555,110],"bb":[102717590614,49,2],"cc":[11567309000,28,3],"dd":[32717590528,34,1],"ee":[18899,4,3]};
-	let c = provider.QueryInterface(Ci.nsIWritablePropertyBag).getProperty('cstrgn') || {};
+	let c = bag.getProperty('cstrgn') || {};
 	let k = Object.keys(c), iSharesBytes = 0;
 	for (let i = 3 ; i < k.length ; ++i ) {
 		iSharesBytes += c[k[i]][0];
@@ -60,6 +61,9 @@ function onLoadProvider(provider) {
 	}
 	Knob(canvas, totalSpace, c, k);
 	fmtSize = undefined;
+
+	$('provider-account-settings')
+		.lastElementChild.textContent = bag.getProperty('account');
 }
 
 function Knob(aCanvas, aSize, aValues, aStyles, aOptions) {

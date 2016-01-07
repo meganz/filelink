@@ -18,7 +18,7 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/AddonManager.jsm");
 Cu.import("resource:///modules/cloudFileAccounts.js");
 
-let kDebug = !0;
+let kDebug = !1;
 const kMaxFileSize = Math.pow(2,32) - 1;
 const kAuthSecretRealm = "MEGA Auth Secret";
 const kAddonID = 'thunderbird-filelink@mega.nz';
@@ -430,6 +430,7 @@ nsMEGA.prototype = {
 				if (typeof res === 'object') {
 					this._userInfo = res;
 					this.setProperty('cstrgn', res.cstrgn);
+					this.setProperty('account', this._userName);
 					this._totalStorage = Math.round(res.mstrg);
 					this._fileSpaceUsed = Math.round(res.cstrg);
 					successCallback();
