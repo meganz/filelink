@@ -154,6 +154,10 @@ nsMEGA.prototype = {
 		this._prefBranch = Services.prefs
 			.getBranch("mail.cloud_files.accounts." + aAccountKey + ".");
 		this._userName = this._prefBranch.getCharPref("username");
+		// Bug 1240406, displayName might not get set
+		if (!this._prefBranch.getPrefType('displayName')) {
+			this._prefBranch.setCharPref('displayName', this.displayName);
+		}
 	},
 
 	/**
@@ -533,14 +537,36 @@ nsMEGA.prototype = {
 	 *                          and stop states of the creation operation.
 	 */
 	createExistingAccount : function nsMEGA_createExistingAccount(aRequestObserver) {
-		let successCb = function (aResponseText, aRequest) {
-			aRequestObserver.onStopRequest(null, this, Cr.NS_OK);
-		}.bind(this);
+		let callback = function createExistingAccount_Callback(aResult, aWindow) {
+			try {
+				aRequestObserver.onStopRequest(null, this, aResult);
+			}
+			catch (e) {
+				if (e.result === Cr.NS_NOINTERFACE) {
+					LOG('Got Bug 1240406: ' + e.message);
 
-		let failureCb = function (aResponseText, aRequest) {
-			aRequestObserver.onStopRequest(null, this,
-				Ci.nsIMsgCloudFileProvider.authErr);
-		}.bind(this);
+					if (aWindow && aResult === Cr.NS_OK) {
+
+						try {
+							aWindow.arguments[0].accountKey = this.accountKey;
+							aWindow.close();
+							return;
+						}
+						catch (e) {}
+					}
+				}
+				var message =
+					'Sorry, we were unable to complete the account setup, '
+					+ 'please close the dialog and try again.\n\n'
+					+ 'Exception thrown:\n\n' + String(e);
+
+				ERR(e);
+				Services.prompt.alert(null, this.displayName, message);
+			}
+		};
+
+		let successCb = callback.bind(this, Cr.NS_OK);
+		let failureCb = callback.bind(this, Ci.nsIMsgCloudFileProvider.authErr);
 
 		this.logon(successCb, failureCb, true);
 	},
@@ -639,8 +665,8 @@ nsMEGA.prototype = {
 		let window = aWithUI && Services.wm.getMostRecentWindow(null);
 
 		let successCallback = function __logonSuccess() {
-			mozRunAsync(aSuccessCallback);
 			if (window) gModalWindowList.detach(window);
+			aSuccessCallback(window);
 		};
 		let failureCallback = function __logonFailure() {
 			mozRunAsync(aFailureCallback);
