@@ -705,7 +705,12 @@ nsMEGA.prototype = {
 				if (r == 3) {
 					M.u_type = r;
 					this._loggedIn = true;
-					LOG('Logged in as ' + JSON.parse(M.localStorage.attr).name);
+					if (kDebug) {
+						try {
+							LOG('Logged in as ' + JSON.parse(M.localStorage.attr).name);
+						}
+						catch (e) {}
+					}
 					if (ctx._checking !== true) {
 						this._getUserInfo(function () {
 							let cstrgn = this._userInfo.cstrgn;
@@ -935,7 +940,7 @@ nsMEGA.prototype = {
 		M.localStorage = {};
 		if (data)
 			try {
-				M.localStorage = JSON.parse(M.base64urldecode(data));
+				M.localStorage = JSON.parse(M.from8(M.base64urldecode(data)));
 			} catch (e) {
 				ERR(e);
 			}
@@ -949,7 +954,7 @@ nsMEGA.prototype = {
 	 */
 	set _authData(aStore) {
 		if (aStore) {
-			aStore = M.base64urlencode(JSON.stringify(M.localStorage));
+			aStore = M.base64urlencode(M.to8(JSON.stringify(M.localStorage)));
 		} else {
 			M.localStorage = {};
 		}
