@@ -80,6 +80,7 @@ let iUninstallListener;
 function nsMEGA() {
 	try {
 		if (iUninstallListener) {
+			gWindowListener.unregister();
 			AddonManager.removeAddonListener(iUninstallListener);
 		}
 		let self = this;
@@ -93,6 +94,7 @@ function nsMEGA() {
 				}
 			}
 		};
+		gWindowListener.register();
 		AddonManager.addAddonListener(iUninstallListener);
 	} catch(e) {
 		ERR(e);
@@ -201,7 +203,12 @@ nsMEGA.prototype = {
 		if (Services.io.offline)
 			throw Ci.nsIMsgCloudFileProvider.offlineErr;
 
-		LOG("UPLOAD REQUEST FOR " + aFile.leafName);
+		let fileName = aFile.leafName;
+		if (typeof gSTempStorage[aFile.path] === 'string') {
+			fileName = gSTempStorage[aFile.path];
+			delete gSTempStorage[aFile.path];
+		}
+		LOG("UPLOAD REQUEST FOR " + aFile.path + ' (' + fileName + ')');
 
 		// Add progress meter
 		try {
@@ -216,7 +223,7 @@ nsMEGA.prototype = {
 
 		let uploader = new nsMEGAFileUploader(this, aFile,
 				this._uploaderCallback.bind(this, aCallback),
-				aCallback);
+				aCallback, fileName);
 		this._uploads.push(uploader);
 
 		// if we're not uploading a file, log-in & upload.
@@ -361,6 +368,7 @@ nsMEGA.prototype = {
 				ERR(e);
 			} finally {
 				stm.reset();
+				stm.finalize();
 			}
 		}
 		return entry;
@@ -1042,7 +1050,7 @@ nsMEGAChunkUploader.prototype = {
 							mac[2]^mac[3]
 						];
 
-						t = { n : u.file.leafName, hash : u.hash };
+						t = { n : u.saveAs || u.file.leafName, hash : u.hash };
 						u._apiCompleteUpload = [response, t, key, u._complete.bind(u, key)];
 						M.api_completeupload.apply(M, u._apiCompleteUpload);
 					}
@@ -1172,9 +1180,10 @@ nsMEGAEncrypter.prototype = {
 	}
 };
 
-function nsMEGAFileUploader(aOwner, aFile, aCallback, aRequestObserver) {
+function nsMEGAFileUploader(aOwner, aFile, aCallback, aRequestObserver, aFilename) {
 	this.file            = aFile;
 	this.owner           = aOwner;
+	this.saveAs          = aFilename;
 	this.callback        = aCallback;
 	this.requestObserver = aRequestObserver;
 	this.retries         = -1;
@@ -1566,6 +1575,46 @@ const gModalWindowList = {
 	}
 };
 
+const gWindowListener = {
+	register: function() {
+		Services.wm.addListener(this);
+
+		let windows = Services.wm.getEnumerator('msgcompose');
+		while(windows.hasMoreElements()) {
+			let domWindow = windows.getNext().QueryInterface(Ci.nsIDOMWindow);
+			this.attachTo(domWindow);
+		}
+	},
+	unregister: function() {
+		Services.wm.removeListener(this);
+	},
+	attachTo: function(aWindow) {
+		let windowType;
+
+		try {
+			windowType = aWindow.document.documentElement.getAttribute("windowtype");
+		}
+		catch (ex) {}
+
+		if (windowType === 'msgcompose') {
+			monkeyPatchDOMWindow(aWindow);
+		}
+	},
+	onOpenWindow: function (aWindow) {
+		let domWindow = aWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+			.getInterface(Ci.nsIDOMWindowInternal || Ci.nsIDOMWindow);
+
+		domWindow.addEventListener("load", function gWLoad() {
+			domWindow.removeEventListener("load", gWLoad, false);
+			gWindowListener.attachTo(domWindow);
+			domWindow = undefined;
+		}, false);
+	},
+	onCloseWindow: function (aWindow) {},
+	onWindowTitleChange: function (aWindow, aTitle) {}
+};
+
+const gSTempStorage = Object.create(null);
 const mozLazyGetService = XPCOMUtils.defineLazyServiceGetter.bind(XPCOMUtils, this);
 
 mozLazyGetService("mozMIMEService", "@mozilla.org/mime;1", "nsIMIMEService");
@@ -1597,6 +1646,21 @@ function __bug1140687(aWindow) {
 	try {
 		if (aWindow.RemoveSelectedAttachment.toSource().indexOf('cloudProvider.cancelFileUpload') === -1) {
 			Services.scriptloader.loadSubScript("chrome://mega-filelink/content/bug1140687.js", aWindow);
+		}
+	} catch(ex) {}
+}
+
+function monkeyPatchDOMWindow(aWindow) {
+	try {
+		if (aWindow.uploadListener.toSource().indexOf('gSTempStorage') === -1) {
+			var uploadListener = aWindow.uploadListener;
+			aWindow.uploadListener = function(aAttachment, aFile) {
+				if (aAttachment && typeof aAttachment.name === 'string') {
+					gSTempStorage[aFile.path] = aAttachment.name;
+				}
+				uploadListener.apply(this, arguments);
+			};
+			aWindow.uploadListener.prototype = uploadListener.prototype;
 		}
 	} catch(ex) {}
 }
