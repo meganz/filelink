@@ -33,6 +33,18 @@ var apipath = 'https://eu.api.mega.co.nz/';
 var staticpath = 'https://eu.static.mega.co.nz/';
 if (typeof requesti === 'undefined') var requesti = makeid(10);
 
+var getXHRInstance = function() {
+	return Components.classes["@mozilla.org/xmlextras/xmlhttprequest;1"].createInstance(Components.interfaces.nsIXMLHttpRequest);
+};
+
+if (!Components.classes["@mozilla.org/xmlextras/xmlhttprequest;1"]) {
+	Cu.importGlobalProperties(["XMLHttpRequest"]);
+
+	getXHRInstance = function() {
+		return new XMLHttpRequest(Components.interfaces.nsIXMLHttpRequest);
+	};
+}
+
 // compute final MAC from block MACs
 function condenseMacs(macs,key)
 {
@@ -630,8 +642,7 @@ function from8(utf8)
 function getxhr()
 {
 	let Ci = Components.interfaces;
-	let xhr = Components.classes["@mozilla.org/xmlextras/xmlhttprequest;1"]
-                .createInstance(Ci.nsIXMLHttpRequest);
+	let xhr = getXHRInstance();
 	xhr.mozBackgroundRequest = true;
 	xhr.push = function __FilelinkXHRPush(meth, url, data) {
 		this.open(meth, url, true);

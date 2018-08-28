@@ -43,8 +43,11 @@ const console = {
 	}
 };
 
-(function(global) global.loadSubScript = function(file,scope)
-	Services.scriptloader.loadSubScript(file,scope||global))(this);
+(function(global) {
+	global.loadSubScript = function(file, scope) {
+		Services.scriptloader.loadSubScript(file, scope || global);
+	};
+})(this);
 
 const M = {
 	d : kDebug,
@@ -108,14 +111,14 @@ nsMEGA.prototype = {
 
 	classID : Components.ID("{3857A119-990E-43B3-A7E5-92132D13FCC0}"),
 
-	get type()"MEGA",
-	get displayName()"MEGA",
-	get serviceURL()"https://mega.nz/",
-	get iconClass()"chrome://mega-filelink/content/logo16.png",
-	get accountKey()this._accountKey,
-	get lastError()this._lastErrorText,
-	get settingsURL()"chrome://mega-filelink/content/settings.xhtml",
-	get managementURL()"chrome://mega-filelink/content/management.xhtml",
+	get type()           { return "MEGA" },
+	get displayName()    { return "MEGA" },
+	get serviceURL()     { return "https://mega.nz/" },
+	get iconClass()      { return "chrome://mega-filelink/content/logo16.png" },
+	get accountKey()     { return this._accountKey },
+	get lastError()      { return this._lastErrorText },
+	get settingsURL()    { return "chrome://mega-filelink/content/settings.xhtml" },
+	get managementURL()  { return "chrome://mega-filelink/content/management.xhtml" },
 
 	_accountKey : false,
 	_prefBranch : null,
@@ -132,9 +135,9 @@ nsMEGA.prototype = {
 	/**
 	 * If we don't know the limit, this will return -1.
 	 */
-	get fileSpaceUsed() this._fileSpaceUsed,
-	get fileUploadSizeLimit() this._maxFileSize,
-	get remainingFileSpace() this._totalStorage - this._fileSpaceUsed,
+	get fileSpaceUsed() { return this._fileSpaceUsed },
+	get fileUploadSizeLimit() { return this._maxFileSize },
+	get remainingFileSpace() { return this._totalStorage - this._fileSpaceUsed },
 
 	/**
 	 * nsIWritablePropertyBag Implementation
@@ -584,7 +587,7 @@ nsMEGA.prototype = {
 	 * there's a url we can load in a content tab that will allow the user
 	 * to create an account.
 	 */
-	get createNewAccountUrl() "",
+	get createNewAccountUrl() { return "" },
 
 	/**
 	 * For a particular error, return a URL if MEGA has a page for handling
@@ -1195,10 +1198,10 @@ function nsMEGAFileUploader(aOwner, aFile, aCallback, aRequestObserver, aFilenam
 	this.activeUploads   = null;
 }
 nsMEGAFileUploader.prototype = {
-	get maxSimUploads()     4,
-	get maxChunkRetries()   7,
-	get maxUploadRetries()  9,
-	get maxEncrypterJobs() 16,
+	get maxSimUploads()     { return   4 },
+	get maxChunkRetries()   { return   7 },
+	get maxUploadRetries()  { return   9 },
+	get maxEncrypterJobs()  { return  16 },
 
 	/**
 	 * Kicks off the upload request for the file associated with this Uploader.
@@ -1339,7 +1342,8 @@ nsMEGAFileUploader.prototype = {
 			this.encrypter.worker.map(w => w.terminate());
 			this.encrypter = null;
 		}
-		for each(let chunk in this.activeUploads) {
+		for(let k in this.activeUploads) {
+			let chunk = this.activeUploads[k];
 			LOG('Aborting ' + chunk.pid + ', ' + (typeof chunk.xhr));
 			let xhr = chunk.xhr;
 			if (xhr) {
@@ -1414,6 +1418,7 @@ nsMEGAFileUploader.prototype = {
 			let link = 'https://mega.nz/#!' + aHandle + '!' + M.a32_to_base64(aKey);
 			this.owner._setSharedURL(this.file, link, aPrivHandle, this.hash);
 			this.callback(Cr.NS_OK);
+			M.api_req({a: 'log', e: 99799});
 		} else {
 			ERR('Upload error', aHandle);
 			this.owner._killSession(function onUploadError() {
