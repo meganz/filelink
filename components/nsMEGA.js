@@ -693,9 +693,14 @@ nsMEGA.prototype = {
 						let p = this.askPassword(window);
 						if (!p)
 							throw 'No password given.';
-						M.u_login(ctx, this._userName, p, null);
+						let pin;
+						if (ctx.mfauth) {
+							pin = this.askPassword(window, true);
+							if (!pin) throw 'No PIN given.';
+						}
+						M.u_login(ctx, this._userName, p, ctx.authsalt || null, true, pin);
 					} catch(e) {
-						LOG(e);
+						Cu.reportError(e);
 						mozRunAsync(failureCallback);
 					}
 				}
@@ -768,7 +773,7 @@ nsMEGA.prototype = {
 			}.bind(this)
 		};
 		try {
-			M.u_checklogin(ctx);
+			M.u_checklogin(ctx, ctx.email = this._userName);
 		} catch (e) {
 			ERR(e);
 			mozRunAsync(failureCallback);
@@ -813,7 +818,7 @@ nsMEGA.prototype = {
 	/**
 	 * Prompts the user for a password. Returns the empty string on failure.
 	 */
-	askPassword : function nsMEGA_askPassword(aWindow) {
+	askPassword : function nsMEGA_askPassword(aWindow, aMFAuth) {
 		LOG("Getting password for user: " + this._userName);
 
 		let password = { value : "" };
@@ -825,6 +830,10 @@ nsMEGA.prototype = {
 				[this._userName,
 					this.displayName],
 				2);
+
+		if (aMFAuth) {
+			promptString = 'Enter your 2FA code:';
+		}
 
 		let serviceURL = this.serviceURL.replace('//',
 			'//' + encodeURIComponent(this._userName) + '@');

@@ -33,6 +33,11 @@ var apipath = 'https://eu.api.mega.co.nz/';
 var staticpath = 'https://eu.static.mega.co.nz/';
 if (typeof requesti === 'undefined') var requesti = makeid(10);
 
+// d=1;
+// var console = {};
+// console.log = function() { Cu.reportError([].slice.call(arguments).join(" ")) };
+// console.error = console.log;
+
 var getXHRInstance = function() {
 	return Components.classes["@mozilla.org/xmlextras/xmlhttprequest;1"].createInstance(Components.interfaces.nsIXMLHttpRequest);
 };
@@ -894,12 +899,12 @@ function api_reqfailed(c,e)
 // and check the supplied password key.
 // Returns [decrypted master key,verified session ID(,RSA private key)] or false if API error or
 // supplied information incorrect
-function api_getsid(ctx,user,passwordkey,hash)
+function api_getsid(ctx,user,passwordkey,hash, pin)
 {
 	ctx.callback = api_getsid2;
 	ctx.passwordkey = passwordkey;
 
-	api_req({ a : 'us', user : user, uh : hash },ctx);
+	api_req({ a : 'us', user : user, uh : hash, mfa : pin },ctx);
 }
 
 function api_getsid2(res,ctx)
@@ -909,7 +914,7 @@ function api_getsid2(res,ctx)
 
 	if (typeof res == 'object')
 	{
-		var aes = new sjcl.cipher.aes(ctx.passwordkey);
+		var aes = new sjcl.cipher.aes(ctx.authkey || ctx.passwordkey);
 
 		// decrypt master key
 		if (typeof res.k == 'string')
